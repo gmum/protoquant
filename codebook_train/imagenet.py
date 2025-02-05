@@ -1,4 +1,5 @@
 from torchvision import transforms
+from torchvision.transforms.functional import InterpolationMode
 
 # import dataloaders
 from torchvision import datasets
@@ -6,9 +7,12 @@ from torch.utils.data import DataLoader
 
 TRAIN_TRANSFORM = transforms.Compose(
     [
+        transforms.Resize(236),  # 234 for convnext
         transforms.RandomResizedCrop(224),
-        transforms.RandomHorizontalFlip(),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.TrivialAugmentWide(interpolation=InterpolationMode.BILINEAR),
         transforms.ToTensor(),
+        transforms.RandomErasing(p=0.1),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225],
@@ -18,7 +22,7 @@ TRAIN_TRANSFORM = transforms.Compose(
 
 VAL_TRANSFORM = transforms.Compose(
     [
-        transforms.Resize(256),
+        transforms.Resize(236),  # 236 for convnext
         transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(
