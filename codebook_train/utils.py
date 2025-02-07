@@ -74,3 +74,22 @@ def set_reproducibility(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def save_checkpoint(
+    path: str, model: nn.Module, optimizer: torch.optim.Optimizer
+) -> None:
+    """Save the model and optimizer state to a checkpoint file
+
+    Args:
+        path (str): The path to save the checkpoint file
+        model (nn.Module): The model to save
+        optimizer (torch.optim.Optimizer): The optimizer to save
+    """
+
+    checkpoint = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+    }
+
+    torch.save(checkpoint, path)

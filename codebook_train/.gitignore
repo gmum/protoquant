@@ -1,0 +1,6 @@
+__pycache__
+outputs
+data
+checkpoints
+*.pth
+wandb

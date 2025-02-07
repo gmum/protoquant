@@ -2,9 +2,9 @@ import torch
 from torch import nn
 
 
-class Codebook(nn.Module):
+class CosineSimilarityCodebook(nn.Module):
     def __init__(self, num_entries: int, embedding_dim: int):
-        super(Codebook, self).__init__()
+        super().__init__()
         self.embeddings = nn.Embedding(num_entries, embedding_dim)
 
         nn.init.uniform_(
@@ -44,3 +44,22 @@ class Codebook(nn.Module):
         )  # [B, C, H, W]
 
         return quantized
+
+
+def insert_codebook(
+    model: nn.Module,
+    codebook: nn.Module,
+    model_name: str,
+) -> None:
+    # Set requires_grad to False for all parameters
+    for param in model.parameters():
+        param.requires_grad = False
+
+    if model_name == "convnext_tiny":
+        model.features.add_module("codebook", codebook)
+    else:
+        raise ValueError(f"Model {model_name} not supported")
+
+    # Set requires_grad to True for the codebook parameters
+    for param in codebook.parameters():
+        param.requires_grad = True
