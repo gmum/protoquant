@@ -1,13 +1,15 @@
+from pathlib import Path
+from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torchvision import models
-from codebook import Codebook
-from utils import train_epoch, validate_epoch, set_reproducibility
-from imagenet import get_imagenet
-
+from codebook import insert_codebook
+from construct_model import construct_model
+from datasets.construct_dataset import get_dataloaders
+from utils import train_epoch, validate_epoch, set_reproducibility, save_checkpoint
+from datetime import datetime
 import logging
-import argparse
+import hydra
+from config.main_config import MainConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,7 +47,7 @@ def codebook_training(
         )
 
         logger.info(f"Validation top1-accuracy {top1_acc}, top5-accuracy {top5_acc}")
-        if wandb:
+        if wandb_run:
             wandb.log(
                 {
                     "Validation Top1 Accuracy": top1_acc,
@@ -54,64 +56,80 @@ def codebook_training(
             )
 
 
-if __name__ == "__main__":
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument("--epochs", type=int, required=True)
-    argparser.add_argument("--batch_size", type=int, required=True)
-    argparser.add_argument("--imagenet_path", type=str, required=True)
-    argparser.add_argument("--codebook_size", type=int, required=True)
-    argparser.add_argument("--lr", type=float, default=0.001)
-    argparser.add_argument("--weight_decay", type=float, default=0.00002)
-    argparser.add_argument("--num_workers", type=int, default=8)
-    argparser.add_argument("--embedding_dim", type=int, default=768)
-    argparser.add_argument("--seed", type=int, default=42)
-    argparser.add_argument("--wandb_project", type=str, default="codebook-training")
+def prepare_codebook_training(
+    cfg: MainConfig, device: torch.device, wandb_run=None
+) -> None:
+    """Prepare the environment for training with the codebook
 
-    args = argparser.parse_args()
-    logger.info(f"Config: {args}")
-    set_reproducibility(args.seed)
+    Args:
+        cfg (MainConfig): Main configuration object
+        device (torch.device): The device to run the training on
+        wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
+    """
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = construct_model(cfg).to(device)
+    codebook = hydra.utils.instantiate(cfg.codebook).to(device)
+    insert_codebook(model=model, codebook=codebook, model_name=cfg.model.name)
 
-    convnext_tiny = models.convnext_tiny(
-        weights=models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1
-    )
-    convnext_tiny = convnext_tiny.to(device)
-    codebook = Codebook(args.codebook_size, args.embedding_dim).to(device)
-    # inject the codebook into the model after features
-    convnext_tiny.features.add_module("codebook", codebook)
-
-    # Set requires_grad to False for all parameters
-    for param in convnext_tiny.parameters():
-        param.requires_grad = False
-
-    # Set requires_grad to True for the codebook parameters
-    for param in codebook.parameters():
-        param.requires_grad = True
-
-    optimizer = optim.AdamW(
-        codebook.parameters(), lr=args.lr, weight_decay=args.weight_decay
-    )
+    train_dataloader, val_dataloader = get_dataloaders(cfg)
     criterion = nn.CrossEntropyLoss()
-
-    logger.info(f"Model: {convnext_tiny}")
-
-    train_dataloader, val_dataloader = get_imagenet(
-        args.imagenet_path, args.batch_size, args.num_workers
-    )
-
-    if wandb:
-        wandb_run = wandb.init(project=args.wandb_project, config=args)
-    else:
-        wandb_run = None
+    optimizer = hydra.utils.instantiate(cfg.optimizer, codebook.parameters())
 
     codebook_training(
-        model=convnext_tiny,
+        model=model,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         optimizer=optimizer,
         criterion=criterion,
         device=device,
-        epochs=args.epochs,
+        epochs=cfg.epochs,
         wandb_run=wandb_run,
     )
+
+    if cfg.output_checkpoint_path is not None:
+        hydra_path = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+        current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        out_path = hydra_path / f"{cfg.model.name}_{current_date}.pth"
+        logger.info(f"Saving model to {out_path}")
+        save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            path=out_path,
+        )
+
+
+@hydra.main(config_path="config", config_name="main_config", version_base="1.2")
+def main(cfg: MainConfig) -> None:
+    """Main function for the pruning entry point
+
+    Args:
+        cfg (MainConfig): Hydra config object with all the settings. (Located in config/main_config.py)
+    """
+    logger.setLevel(cfg._logging_level)
+
+    logger.info(OmegaConf.to_yaml(cfg))
+    hydra_output_dir = Path(
+        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+    )
+    logger.info(f"Hydra output directory: {hydra_output_dir}")
+    set_reproducibility(cfg.seed)
+
+    if cfg.wandb.is_enabled:
+        wandb_run = wandb.init(
+            project=cfg.wandb.project,
+            config=OmegaConf.to_container(cfg),
+            entity=cfg.wandb.entity,
+            group=cfg.wandb.group,
+            job_type=cfg.wandb.job_type,
+            tags=cfg.wandb.tags,
+        )
+    else:
+        wandb_run = None
+        logger.info("wandb is not enabled")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    prepare_codebook_training(cfg, device, wandb_run)
+
+
+if __name__ == "__main__":
+    main()
