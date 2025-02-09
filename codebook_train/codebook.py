@@ -1,6 +1,8 @@
 import torch
 from torch import nn
+import logging
 
+logger = logging.getLogger(__name__)
 
 class CosineSimilarityCodebook(nn.Module):
     def __init__(self, num_entries: int, embedding_dim: int):
@@ -47,15 +49,31 @@ class CosineSimilarityCodebook(nn.Module):
 
 
 def insert_codebook(
-    model: nn.Module,
-    codebook: nn.Module,
-    model_name: str,
+    model: nn.Module, codebook: nn.Module, model_name: str, unfreeze_before: int
 ) -> None:
+    """Insert the codebook into the model and sets the gradient requirements
+
+    Args:
+        model (nn.Module): A PyTorch model.
+        codebook (nn.Module): A module with the codebook.
+        model_name (str): The name of the model.
+        unfreeze_before (int): The number of layers to unfreeze before the codebook.
+
+    Raises:
+        ValueError: If the model name is not supported.
+    """
+
     # Set requires_grad to False for all parameters
     for param in model.parameters():
         param.requires_grad = False
 
     if model_name == "convnext_tiny":
+        if unfreeze_before > 0:
+            layers_to_unfreeze = model.features[-1][-unfreeze_before:]
+            logger.info(f"Unfreezing {layers_to_unfreeze}")
+            for param in layers_to_unfreeze.parameters():
+                param.requires_grad = True
+
         model.features.add_module("codebook", codebook)
     else:
         raise ValueError(f"Model {model_name} not supported")

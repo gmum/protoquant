@@ -69,11 +69,19 @@ def prepare_codebook_training(
 
     model = construct_model(cfg).to(device)
     codebook = hydra.utils.instantiate(cfg.codebook).to(device)
-    insert_codebook(model=model, codebook=codebook, model_name=cfg.model.name)
+    insert_codebook(
+        model=model,
+        codebook=codebook,
+        model_name=cfg.model.name,
+        unfreeze_before=cfg.training.unfreeze_before,
+    )
 
     train_dataloader, val_dataloader = get_dataloaders(cfg)
     criterion = nn.CrossEntropyLoss()
-    optimizer = hydra.utils.instantiate(cfg.optimizer, codebook.parameters())
+
+    grad_parameters = [param for param in model.parameters() if param.requires_grad]
+    logger.info(f"Parameters to optimize: {len(grad_parameters)}")
+    optimizer = hydra.utils.instantiate(cfg.optimizer, grad_parameters)
 
     codebook_training(
         model=model,

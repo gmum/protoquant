@@ -35,6 +35,11 @@ class ModelConfig:
 
 
 @dataclass
+class TrainingConfig:
+    unfreeze_before: int = 0  # how many layers to unfreeze before the codebook
+
+
+@dataclass
 class MainConfig:
     defaults: list[Any] = field(
         default_factory=lambda: [
@@ -55,6 +60,7 @@ class MainConfig:
     val_dataloader: Dataloaders = field(default_factory=Dataloaders)
 
     codebook: BaseCodebookConfig = MISSING
+    training: TrainingConfig = field(default_factory=TrainingConfig)
     _logging_level: int = 20
 
     wandb: WandbConfig = field(default_factory=WandbConfig)
