@@ -69,7 +69,7 @@ def insert_codebook(
 
     if model_name == "convnext_tiny":
         if unfreeze_before > 0:
-            layers_to_unfreeze = model.features[-1][-unfreeze_before:]
+            layers_to_unfreeze = model.features[-unfreeze_before:]
             logger.info(f"Unfreezing {layers_to_unfreeze}")
             for param in layers_to_unfreeze.parameters():
                 param.requires_grad = True

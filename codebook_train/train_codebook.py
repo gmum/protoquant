@@ -5,7 +5,12 @@ import torch.nn as nn
 from codebook import insert_codebook
 from construct_model import construct_model
 from datasets.construct_dataset import get_dataloaders
-from utils import train_epoch, validate_epoch, set_reproducibility, save_checkpoint
+from utils import (
+    train_epoch,
+    validate_epoch,
+    set_reproducibility,
+    save_checkpoint,
+)
 from datetime import datetime
 import logging
 import hydra
@@ -25,7 +30,7 @@ def codebook_training(
     model: nn.Module,
     train_dataloader: torch.utils.data.DataLoader,
     val_dataloader: torch.utils.data.DataLoader,
-    optimizer: torch.optim.Optimizer,
+    optimizers: list[torch.optim.Optimizer],
     criterion: nn.Module,
     device: torch.device,
     epochs: int,
@@ -36,7 +41,7 @@ def codebook_training(
         train_epoch(
             model=model,
             train_dataloader=train_dataloader,
-            optimizer=optimizer,
+            optimizers=optimizers,
             criterion=criterion,
             device=device,
             wandb_run=wandb_run,
@@ -79,15 +84,25 @@ def prepare_codebook_training(
     train_dataloader, val_dataloader = get_dataloaders(cfg)
     criterion = nn.CrossEntropyLoss()
 
+    codebook.requires_grad_(False)
     grad_parameters = [param for param in model.parameters() if param.requires_grad]
-    logger.info(f"Parameters to optimize: {len(grad_parameters)}")
-    optimizer = hydra.utils.instantiate(cfg.optimizer, grad_parameters)
+    codebook.requires_grad_(True)
+
+    optimizers = []
+    if grad_parameters:
+        base_optimizer = hydra.utils.instantiate(cfg.base_optimizer, grad_parameters)
+        optimizers.append(base_optimizer)
+
+    codebook_optimizer = hydra.utils.instantiate(
+        cfg.codebook_optimizer, codebook.parameters()
+    )
+    optimizers.append(codebook_optimizer)
 
     codebook_training(
         model=model,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        optimizer=optimizer,
+        optimizers=optimizers,
         criterion=criterion,
         device=device,
         epochs=cfg.epochs,
@@ -101,7 +116,6 @@ def prepare_codebook_training(
         logger.info(f"Saving model to {out_path}")
         save_checkpoint(
             model=model,
-            optimizer=optimizer,
             path=out_path,
         )
 
@@ -115,13 +129,6 @@ def main(cfg: MainConfig) -> None:
     """
     logger.setLevel(cfg._logging_level)
 
-    logger.info(OmegaConf.to_yaml(cfg))
-    hydra_output_dir = Path(
-        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    )
-    logger.info(f"Hydra output directory: {hydra_output_dir}")
-    set_reproducibility(cfg.seed)
-
     if cfg.wandb.is_enabled:
         wandb_run = wandb.init(
             project=cfg.wandb.project,
@@ -134,6 +141,13 @@ def main(cfg: MainConfig) -> None:
     else:
         wandb_run = None
         logger.info("wandb is not enabled")
+
+    logger.info(OmegaConf.to_yaml(cfg))
+    hydra_output_dir = Path(
+        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+    )
+    logger.info(f"Hydra output directory: {hydra_output_dir}")
+    set_reproducibility(cfg.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     prepare_codebook_training(cfg, device, wandb_run)

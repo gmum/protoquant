@@ -12,7 +12,7 @@ from .optimizers import BaseOptimizerConfig
 
 @dataclass
 class Dataloaders:
-    batch_size: int = 128
+    batch_size: int = 32
     num_workers: int = 4
     pin_memory: bool = True
     drop_last: bool = False
@@ -44,7 +44,8 @@ class MainConfig:
     defaults: list[Any] = field(
         default_factory=lambda: [
             "_self_",
-            {"optimizer": "_"},
+            {"base_optimizer": "none"},
+            {"codebook_optimizer": "_"},
             {"dataset": "_"},
             {"codebook": "_"},
         ]
@@ -53,7 +54,8 @@ class MainConfig:
 
     model: ModelConfig = field(default_factory=ModelConfig)
     epochs: int = MISSING
-    optimizer: BaseOptimizerConfig = MISSING
+    base_optimizer: BaseOptimizerConfig = MISSING
+    codebook_optimizer: BaseOptimizerConfig = MISSING
 
     dataset: BaseDataset = MISSING
     train_dataloader: Dataloaders = field(default_factory=Dataloaders)

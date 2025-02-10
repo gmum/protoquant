@@ -31,6 +31,17 @@ class SGDOptimizerConfig(BaseOptimizerConfig):
 
 
 config_store = ConfigStore.instance()
-config_store.store(group="optimizer", name="adam", node=AdamOptimizerConfig)
-config_store.store(group="optimizer", name="adamw", node=AdamWOptimizerConfig)
-config_store.store(group="optimizer", name="sgd", node=SGDOptimizerConfig)
+for group in ("base_optimizer", "codebook_optimizer"):
+    config_store.store(group=group, name="adam", node=AdamOptimizerConfig)
+    config_store.store(group=group, name="adamw", node=AdamWOptimizerConfig)
+    config_store.store(group=group, name="sgd", node=SGDOptimizerConfig)
+
+# placeholder for no optimizer
+config_store.store(
+    group="base_optimizer",
+    name="none",
+    node=BaseOptimizerConfig(
+        lr=0.1,
+        _target_="[Warning] Base optimizer not set and layers outside the codebook require gradients",
+    ),
+)
