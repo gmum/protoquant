@@ -34,10 +34,10 @@ class CUB200(VisionDataset):
         )
 
         # Select train or test split
-        self.data = data[data["is_train"] == int(train)]
+        self.data = data[data["is_train"] == int(train)].copy()
 
         # Convert labels to zero-based index
-        self.data["label"] -= 1
+        self.data.loc[:, "label"] -= 1
 
         self.image_paths = self.data["path"].tolist()
         self.labels = self.data["label"].tolist()
