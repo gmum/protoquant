@@ -74,6 +74,9 @@ def prepare_codebook_training(
 
     model = construct_model(cfg).to(device)
     codebook = hydra.utils.instantiate(cfg.codebook).to(device)
+    if cfg.codebook_path:
+        codebook.load_state_dict(torch.load(cfg.codebook_path))
+
     insert_codebook(
         model=model,
         codebook=codebook,
@@ -117,6 +120,10 @@ def prepare_codebook_training(
         save_checkpoint(
             model=model,
             path=out_path,
+        )
+        save_checkpoint(
+            model=codebook,
+            path=hydra_path / f"{cfg.model.name}_codebook_{current_date}.pth",
         )
 
 

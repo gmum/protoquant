@@ -62,6 +62,7 @@ class MainConfig:
     val_dataloader: Dataloaders = field(default_factory=Dataloaders)
 
     codebook: BaseCodebookConfig = MISSING
+    codebook_path: Optional[str] = None
     training: TrainingConfig = field(default_factory=TrainingConfig)
     _logging_level: int = 20
 

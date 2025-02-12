@@ -91,23 +91,4 @@ def save_checkpoint(path: str, model: nn.Module) -> None:
         model (nn.Module): The model to save
     """
 
-    checkpoint = {"model": model.state_dict()}
-    torch.save(checkpoint, path)
-
-
-def get_param_groups(
-    base_optimizer_cfg: BaseOptimizerConfig,
-    codebook_optimizer_cfg: BaseOptimizerConfig,
-    base_parameters: list[torch.nn.Parameter],
-    codebook_parameters: list[torch.nn.Parameter],
-) -> list[dict[str, any]]:
-    base_optimizer_dict = asdict(base_optimizer_cfg)
-    codebook_optimizer_dict = asdict(codebook_optimizer_cfg)
-    del base_optimizer_dict["_target_"]
-    del codebook_optimizer_dict["_target_"]
-
-    base_optimizer_dict["params"] = base_parameters
-    codebook_optimizer_dict["params"] = codebook_parameters
-
-    param_groups = [base_optimizer_dict, codebook_optimizer_dict]
-    return param_groups
+    torch.save(model.state_dict(), path)
