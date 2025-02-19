@@ -68,34 +68,39 @@ def get_imagenet_transforms(
         tuple[transforms_v2.Compose, transforms_v2.Compose]: Train and validation transforms.
     """
 
-    common_transformations = []
+    train_transforms = []
+    val_transforms = []
 
     if resize_value is not None:
-        common_transformations.append(
-            transforms_v2.Resize((resize_value, resize_value), antialias=True)
+        train_transforms.append(
+            transforms_v2.Resize(size=(resize_value, resize_value), antialias=True)
         )
+        val_transforms.append(
+            transforms_v2.Resize(size=(resize_value, resize_value), antialias=True)
+        )
+
+    if horizontal_flip is not None:
+        train_transforms.append(transforms_v2.RandomHorizontalFlip(p=horizontal_flip))
 
     if crop_value is not None:
-        common_transformations.append(
-            transforms_v2.RandomResizedCrop(crop_value, antialias=True)
-        )
+        train_transforms.append(transforms_v2.RandomCrop(size=(crop_value, crop_value)))
+        val_transforms.append(transforms_v2.CenterCrop(crop_value))
 
-    common_transformations.extend(
-        [
-            transforms_v2.ToImage(),
-            transforms_v2.ToDtype(torch.float32, scale=True),
-            transforms_v2.Normalize(mean=IMAGENET1K_MEAN, std=IMAGENET1K_STD),
-        ]
-    )
+    train_transforms.append(transforms_v2.TrivialAugmentWide())
 
-    train_transforms = common_transformations.copy()
-    if horizontal_flip is not None:
-        train_transforms.insert(-2, transforms_v2.RandomHorizontalFlip(horizontal_flip))
+    common = [
+        transforms_v2.ToImage(),
+        transforms_v2.ToDtype(torch.float32, scale=True),
+        transforms_v2.Normalize(mean=IMAGENET1K_MEAN, std=IMAGENET1K_STD),
+    ]
+
+    train_transforms.extend(common)
+    val_transforms.extend(common)
 
     if random_erase is not None:
-        train_transforms.insert(-2, transforms_v2.RandomErasing(random_erase))
+        train_transforms.append(transforms_v2.RandomErasing(p=random_erase))
 
-    test_transform = transforms_v2.Compose(common_transformations)
     train_transform = transforms_v2.Compose(train_transforms)
+    val_transform = transforms_v2.Compose(val_transforms)
 
-    return train_transform, test_transform
+    return train_transform, val_transform
