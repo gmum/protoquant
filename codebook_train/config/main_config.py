@@ -37,6 +37,7 @@ class ModelConfig:
 @dataclass
 class TrainingConfig:
     unfreeze_before: int = 0  # how many layers to unfreeze before the codebook
+    label_smoothing: float = 0.1
 
 
 @dataclass

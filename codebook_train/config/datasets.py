@@ -9,6 +9,7 @@ from omegaconf import MISSING
 class BaseDataset:
     name: str = MISSING
     _path: str = MISSING
+    num_classes: int = MISSING
 
 
 @dataclass

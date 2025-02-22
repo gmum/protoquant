@@ -1,11 +1,8 @@
-from dataclasses import asdict
 import logging
 import torch
 import torch.nn as nn
 import random
 import numpy as np
-
-from config.optimizers import BaseOptimizerConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,6 +33,7 @@ def validate_epoch(
 def train_epoch(
     model: nn.Module,
     train_dataloader: torch.utils.data.DataLoader,
+    transforms: torch.nn.Module,
     optimizers: list[torch.optim.Optimizer],
     criterion: nn.Module,
     device: torch.device,
@@ -45,18 +43,19 @@ def train_epoch(
 
     for i, (images, labels) in enumerate(train_dataloader):
         images, labels = images.to(device), labels.to(device)
+        transformed_images, transformed_labels = transforms(images, labels)
 
         for optimizer in optimizers:
             optimizer.zero_grad()
 
-        output = model(images)
-        loss = criterion(output, labels)
+        logits = model(transformed_images)
+        loss = criterion(logits, transformed_labels)
         loss.backward()
 
         for optimizer in optimizers:
             optimizer.step()
 
-        accuracy = (output.argmax(1) == labels).float().mean()
+        accuracy = (logits.argmax(1) == labels).float().mean()
 
         if wandb_run:
             wandb_run.log(
