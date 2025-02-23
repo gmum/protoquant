@@ -13,7 +13,18 @@ class CosineSimilarityCodebook(nn.Module):
             self.embeddings.weight, a=-1.0, b=1.0
         )  # Initialize codebook vectors
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Calculate the VQ-VAE loss and quantize the input tensor using cosine similarity.
+
+        Args:
+            x (torch.Tensor): Input from the last layer.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple with the quantized tensor, codebook loss and alignment loss.
+        """
+
         # assume the input has a batch dimension
         assert len(x.shape) == 4, "Input tensor must have a batch dimension"
 
@@ -38,19 +49,23 @@ class CosineSimilarityCodebook(nn.Module):
         indices = torch.argmax(similarity, dim=-1)  # [B, H * W]
 
         # Replace each token with its closest codebook vector
-        quantized = self.embeddings(indices)  # [B, H * W, C]
+        quantized_flat = self.embeddings(indices)  # [B, H * W, C]
 
         # Reshape back to (B, C, H, W)
-        quantized = quantized.view(batch_size, height, width, channels).permute(
+        quantized = quantized_flat.view(batch_size, height, width, channels).permute(
             0, 3, 1, 2
         )  # [B, C, H, W]
 
-        return quantized
+        # VQ-VAE losses
+        codebook_loss = torch.functional.F.mse_loss(quantized_flat.detach(), x_flat)
+        commitment_loss = torch.functional.F.mse_loss(quantized_flat, x_flat.detach())
+
+        return quantized, codebook_loss, commitment_loss
 
 
-def insert_codebook(
+def create_codebook_wrapper(
     model: nn.Module, codebook: nn.Module, model_name: str, unfreeze_before: int
-) -> None:
+) -> nn.Module:
     """Insert the codebook into the model and sets the gradient requirements
 
     Args:
@@ -61,6 +76,9 @@ def insert_codebook(
 
     Raises:
         ValueError: If the model name is not supported.
+
+    Returns:
+        nn.Module: A wrapper module with the codebook inserted.
     """
 
     # Set requires_grad to False for all parameters
@@ -74,10 +92,36 @@ def insert_codebook(
             for param in layers_to_unfreeze.parameters():
                 param.requires_grad = True
 
-        model.features.add_module("codebook", codebook)
+        codebook_wrapper = ConvNextCosineWrapper(
+            features=model.features,
+            codebook=codebook,
+            classifier=model.classifier,
+        )
     else:
         raise ValueError(f"Model {model_name} not supported")
 
     # Set requires_grad to True for the codebook parameters
     for param in codebook.parameters():
         param.requires_grad = True
+
+    return codebook_wrapper
+
+
+class ConvNextCosineWrapper(nn.Module):
+    def __init__(self, features: nn.Module, codebook: nn.Module, classifier: nn.Module):
+        super().__init__()
+        self.features = features
+        self.codebook = codebook
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = classifier
+
+    def forward(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        x = self.features(x)
+        # Store codebook output directly without unpacking
+        x, codebook_loss, commitment_loss = self.codebook(x)
+        x = self.avgpool(x)
+        x = self.classifier(x)
+
+        return x, codebook_loss, commitment_loss

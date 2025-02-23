@@ -18,8 +18,8 @@ def validate_epoch(
         for inputs, labels in val_dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
 
-            outputs = model(inputs)
-            _, pred = outputs.topk(5, 1, True, True)
+            logits = model(inputs)
+            _, pred = logits.topk(5, 1, True, True)
 
             total += labels.size(0)
             top1_correct += (pred[:, :1] == labels.view(-1, 1)).sum().item()
@@ -66,6 +66,76 @@ def train_epoch(
             logger.info(
                 f"Iteration: {i} / {len(train_dataloader)}, Loss: {loss.item()}, Accuracy: {accuracy.item()}"
             )
+
+
+def train_epoch_cosine_codebook(
+    model: nn.Module,
+    train_dataloader: torch.utils.data.DataLoader,
+    transforms: torch.nn.Module,
+    optimizers: list[torch.optim.Optimizer],
+    criterion: nn.Module,
+    device: torch.device,
+    wandb_run=None,
+) -> None:
+    model.train()
+
+    for batch, (images, labels) in enumerate(train_dataloader):
+        images, labels = images.to(device), labels.to(device)
+        transformed_images, transformed_labels = transforms(images, labels)
+
+        for optimizer in optimizers:
+            optimizer.zero_grad()
+
+        logits, codebook_loss, commitment_loss = model(transformed_images)
+        task_loss = criterion(logits, transformed_labels)
+
+        # Combine losses
+        total_loss = task_loss + codebook_loss + commitment_loss
+
+        # Backward pass
+        total_loss.backward()
+
+        for optimizer in optimizers:
+            optimizer.step()
+
+        accuracy = (logits.argmax(1) == labels).float().mean()
+
+        log_dict = {
+            "Train Loss": total_loss.item(),
+            "Task Loss": task_loss.item(),
+            "Codebook Loss": codebook_loss.item(),
+            "Commitment Loss": commitment_loss.item(),
+            "Train Accuracy": accuracy.item(),
+        }
+
+        if wandb_run:
+            wandb_run.log(log_dict)
+
+        if (batch + 1) % (len(train_dataloader) // 10) == 0:
+            logger.info(f"Batch: {batch + 1} / {len(train_dataloader)}")
+            logger.info(log_dict)
+
+
+def validate_epoch_cosine_codebook(
+    model: nn.Module, val_dataloader: torch.utils.data.DataLoader, device: torch.device
+) -> tuple[float, float]:
+    model.eval()
+    top1_correct, top5_correct, total = 0, 0, 0
+
+    with torch.no_grad():
+        for inputs, labels in val_dataloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            logits, _, _ = model(inputs)
+            _, pred = logits.topk(5, 1, True, True)
+
+            total += labels.size(0)
+            top1_correct += (pred[:, :1] == labels.view(-1, 1)).sum().item()
+            top5_correct += (pred == labels.view(-1, 1)).sum().item()
+
+    top1_acc = (top1_correct / total) * 100
+    top5_acc = (top5_correct / total) * 100
+    return top1_acc, top5_acc
 
 
 def set_reproducibility(seed: int) -> None:
