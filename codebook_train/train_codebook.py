@@ -2,12 +2,13 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
-from codebook import insert_codebook
+from codebook import create_codebook_wrapper
 from construct_model import construct_model
 from datasets.construct_dataset import get_dataloaders
 from utils import (
-    train_epoch,
+    train_epoch_cosine_codebook,
     validate_epoch,
+    validate_epoch_cosine_codebook,
     set_reproducibility,
     save_checkpoint,
 )
@@ -15,6 +16,7 @@ from datetime import datetime
 import logging
 import hydra
 from config.main_config import MainConfig
+from torchvision.transforms import v2 as transforms_v2
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ except ImportError:
 def codebook_training(
     model: nn.Module,
     train_dataloader: torch.utils.data.DataLoader,
+    train_transforms: torch.nn.Module,
     val_dataloader: torch.utils.data.DataLoader,
     optimizers: list[torch.optim.Optimizer],
     criterion: nn.Module,
@@ -38,16 +41,17 @@ def codebook_training(
 ):
     for epoch in range(epochs):
         logger.info(f"Epoch: {epoch}")
-        train_epoch(
+        train_epoch_cosine_codebook(
             model=model,
             train_dataloader=train_dataloader,
+            transforms=train_transforms,
             optimizers=optimizers,
             criterion=criterion,
             device=device,
             wandb_run=wandb_run,
         )
 
-        top1_acc, top5_acc = validate_epoch(
+        top1_acc, top5_acc = validate_epoch_cosine_codebook(
             model=model, val_dataloader=val_dataloader, device=device
         )
 
@@ -73,27 +77,42 @@ def prepare_codebook_training(
     """
 
     model = construct_model(cfg).to(device)
+
+    train_dataloader, val_dataloader = get_dataloaders(cfg)
+    logger.info("Validate the base model")
+    base_top1_acc, base_top5_acc = validate_epoch(
+        model=model, val_dataloader=val_dataloader, device=device
+    )
+
+    logger.info(
+        f"Base Validation top1-accuracy {base_top1_acc}, top5-accuracy {base_top5_acc}"
+    )
+
+    # create and insert the codebook into the model, set the requires_grad
     codebook = hydra.utils.instantiate(cfg.codebook).to(device)
     if cfg.codebook_path:
         codebook.load_state_dict(torch.load(cfg.codebook_path))
 
-    insert_codebook(
+    model_with_codebook = create_codebook_wrapper(
         model=model,
         codebook=codebook,
         model_name=cfg.model.name,
         unfreeze_before=cfg.training.unfreeze_before,
     )
-
-    train_dataloader, val_dataloader = get_dataloaders(cfg)
-    criterion = nn.CrossEntropyLoss()
+    logger.info(f"Model with codebook: {model_with_codebook}")
 
     codebook.requires_grad_(False)
-    grad_parameters = [param for param in model.parameters() if param.requires_grad]
+    base_grad_parameters = [
+        param for param in model_with_codebook.parameters() if param.requires_grad
+    ]
     codebook.requires_grad_(True)
 
     optimizers = []
-    if grad_parameters:
-        base_optimizer = hydra.utils.instantiate(cfg.base_optimizer, grad_parameters)
+    if base_grad_parameters:
+        logger.info("Creating separate optimizer for the base model and the codebook")
+        base_optimizer = hydra.utils.instantiate(
+            cfg.base_optimizer, base_grad_parameters
+        )
         optimizers.append(base_optimizer)
 
     codebook_optimizer = hydra.utils.instantiate(
@@ -101,9 +120,15 @@ def prepare_codebook_training(
     )
     optimizers.append(codebook_optimizer)
 
+    cutmix = transforms_v2.CutMix(num_classes=cfg.dataset.num_classes)
+    mixup = transforms_v2.MixUp(num_classes=cfg.dataset.num_classes)
+    cutmix_or_mixup = transforms_v2.RandomChoice([cutmix, mixup])
+    criterion = nn.CrossEntropyLoss(label_smoothing=cfg.training.label_smoothing)
+
     codebook_training(
-        model=model,
+        model=model_with_codebook,
         train_dataloader=train_dataloader,
+        train_transforms=cutmix_or_mixup,
         val_dataloader=val_dataloader,
         optimizers=optimizers,
         criterion=criterion,

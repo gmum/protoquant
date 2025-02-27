@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import random
 import numpy as np
+from codebook import ConvNextCosineWrapper
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def train_epoch(
 
 
 def train_epoch_cosine_codebook(
-    model: nn.Module,
+    model: ConvNextCosineWrapper,
     train_dataloader: torch.utils.data.DataLoader,
     transforms: torch.nn.Module,
     optimizers: list[torch.optim.Optimizer],
@@ -86,11 +87,11 @@ def train_epoch_cosine_codebook(
         for optimizer in optimizers:
             optimizer.zero_grad()
 
-        logits, codebook_loss, commitment_loss = model(transformed_images)
+        logits, commitment_loss = model(transformed_images)
         task_loss = criterion(logits, transformed_labels)
 
         # Combine losses
-        total_loss = task_loss + codebook_loss + commitment_loss
+        total_loss = task_loss + commitment_loss
 
         # Backward pass
         total_loss.backward()
@@ -98,22 +99,24 @@ def train_epoch_cosine_codebook(
         for optimizer in optimizers:
             optimizer.step()
 
-        accuracy = (logits.argmax(1) == labels).float().mean()
-
-        log_dict = {
-            "Train Loss": total_loss.item(),
-            "Task Loss": task_loss.item(),
-            "Codebook Loss": codebook_loss.item(),
-            "Commitment Loss": commitment_loss.item(),
-            "Train Accuracy": accuracy.item(),
-        }
-
-        if wandb_run:
-            wandb_run.log(log_dict)
-
         if (batch + 1) % (len(train_dataloader) // 10) == 0:
+            accuracy = (logits.argmax(1) == labels).float().mean()
+            log_dict = {
+                "Train Loss": total_loss.item(),
+                "Task Loss": task_loss.item(),
+                "Commitment Loss": commitment_loss.item(),
+                "Train Accuracy": accuracy.item(),
+            }
+            codebook_statistics = model.codebook.get_statistics()
+            model.codebook.reset_statistics()
+
+            if wandb_run:
+                wandb_run.log(log_dict)
+                wandb_run.log(codebook_statistics)
+
             logger.info(f"Batch: {batch + 1} / {len(train_dataloader)}")
             logger.info(log_dict)
+            logger.info(codebook_statistics)
 
 
 def validate_epoch_cosine_codebook(
@@ -126,7 +129,7 @@ def validate_epoch_cosine_codebook(
         for inputs, labels in val_dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
 
-            logits, _, _ = model(inputs)
+            logits, _ = model(inputs)
             _, pred = logits.topk(5, 1, True, True)
 
             total += labels.size(0)

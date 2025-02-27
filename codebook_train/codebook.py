@@ -8,10 +8,13 @@ class CosineSimilarityCodebook(nn.Module):
     def __init__(self, num_entries: int, embedding_dim: int):
         super().__init__()
         self.embeddings = nn.Embedding(num_entries, embedding_dim)
+        nn.init.orthogonal_(
+            self.embeddings.weight,
+        )
 
-        nn.init.uniform_(
-            self.embeddings.weight, a=-1.0, b=1.0
-        )  # Initialize codebook vectors
+        # Add tracking buffers
+        self.num_entries = num_entries
+        self.register_buffer("code_usage", torch.zeros(num_entries, dtype=torch.long))
 
     def forward(
         self, x: torch.Tensor
@@ -25,42 +28,45 @@ class CosineSimilarityCodebook(nn.Module):
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple with the quantized tensor, codebook loss and alignment loss.
         """
 
-        # assume the input has a batch dimension
-        assert len(x.shape) == 4, "Input tensor must have a batch dimension"
+        assert len(x.shape) == 4
 
-        # Flatten and permute to (batch, H * W, C)
-        batch_size, channels, height, width = x.shape
-        x_flat = x.view(batch_size, channels, height * width).permute(
-            0, 2, 1
-        )  # (batch, H * W, C)
+        B, C, H, W = x.shape
+        x = x.view(B, C, H * W).permute(0, 2, 1)
 
-        # Normalize input vectors and codebook vectors
-        x_normalized = torch.functional.F.normalize(x_flat, dim=-1)  # [B, H * W, C]
-        codebook_normalized = torch.functional.F.normalize(
-            self.embeddings.weight, dim=-1
-        )  # [num_entries, C]
+        with torch.no_grad():
+            c = self.embeddings.weight
 
-        # Compute cosine similarity between input vectors and codebook vectors
-        similarity = torch.matmul(
-            x_normalized, codebook_normalized.t()
-        )  # [B, H * W, num_entries]
+            x_unit = torch.functional.F.normalize(x, dim=-1)
+            c_unit = torch.functional.F.normalize(c, dim=-1)
 
-        # Find the closest codebook vector for each spatial token
-        indices = torch.argmax(similarity, dim=-1)  # [B, H * W]
+            sim = x_unit @ c_unit.t()
+            indices = torch.argmax(sim, dim=-1)
 
-        # Replace each token with its closest codebook vector
-        quantized_flat = self.embeddings(indices)  # [B, H * W, C]
+            if self.training:
+                # sum over batch dim
+                count = torch.bincount(indices.view(-1), minlength=self.num_entries)
+                self.code_usage += count.long()
 
-        # Reshape back to (B, C, H, W)
-        quantized = quantized_flat.view(batch_size, height, width, channels).permute(
-            0, 3, 1, 2
-        )  # [B, C, H, W]
+        quantized = self.embeddings(indices)
 
-        # VQ-VAE losses
-        codebook_loss = torch.functional.F.mse_loss(quantized_flat.detach(), x_flat)
-        commitment_loss = torch.functional.F.mse_loss(quantized_flat, x_flat.detach())
+        commitment_loss = torch.functional.F.mse_loss(quantized, x.detach())
+        quantized = quantized.view(B, H, W, C).permute(0, 3, 1, 2)
 
-        return quantized, codebook_loss, commitment_loss
+        return quantized, commitment_loss
+
+    def get_statistics(self) -> dict[str, torch.Tensor]:
+        """Return statistics about the codebook usage.
+
+        Returns:
+            dict[str, torch.Tensor]: Dictionary with the statistics.
+        """
+        return {
+            "code_usage": self.code_usage.clone(),
+            "dead_ratio": (self.code_usage == 0).float().mean(),
+        }
+
+    def reset_statistics(self):
+        self.code_usage.zero_()
 
 
 def create_codebook_wrapper(
@@ -115,13 +121,11 @@ class ConvNextCosineWrapper(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.classifier = classifier
 
-    def forward(
-        self, x: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x = self.features(x)
         # Store codebook output directly without unpacking
-        x, codebook_loss, commitment_loss = self.codebook(x)
+        x, commitment_loss = self.codebook(x)
         x = self.avgpool(x)
         x = self.classifier(x)
 
-        return x, codebook_loss, commitment_loss
+        return x, commitment_loss
