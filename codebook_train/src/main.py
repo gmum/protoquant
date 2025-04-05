@@ -113,7 +113,7 @@ def prepare_codebook_training(
         cfg=cfg,
     )
     logger.info(f"Optimizers: {optimizers}")
-    
+
     epoch_iters = len(train_dataloader)
     logger.info(f"Total iterations: {epoch_iters * cfg.epochs}")
     linear_scheduler_iters = cfg.warmup_epochs * epoch_iters
@@ -123,12 +123,11 @@ def prepare_codebook_training(
         end_factor=1.0,
         total_iters=linear_scheduler_iters,
     )
-    cosine_cycles = 3
-    cosine_cycle_iterations = ((cfg.epochs - cfg.warmup_epochs) * epoch_iters) // (2**cosine_cycles - 1)
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+
+    cosine_iterations = cfg.epochs * epoch_iters - linear_scheduler_iters
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizers[0],
-        T_0=cosine_cycle_iterations,
-        T_mult=2,
+        T_0=cosine_iterations,
         eta_min=0.000001,
     )
     sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
@@ -137,7 +136,7 @@ def prepare_codebook_training(
         milestones=[linear_scheduler_iters],
     )
     logger.info(f"Warmup iterations: {linear_scheduler_iters}")
-    logger.info(f"Cosine iterations: {cosine_cycle_iterations}, cycles: {cosine_cycles}")
+    logger.info(f"Cosine iterations: {cosine_iterations}")
 
     cutmix = transforms_v2.CutMix(num_classes=cfg.dataset.num_classes)
     mixup = transforms_v2.MixUp(num_classes=cfg.dataset.num_classes)
