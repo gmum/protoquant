@@ -127,7 +127,7 @@ def prepare_codebook_training(
     cosine_iterations = cfg.epochs * epoch_iters - linear_scheduler_iters
     cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizers[0],
-        T_0=cosine_iterations,
+        T_max=cosine_iterations,
         eta_min=0.000001,
     )
     sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
