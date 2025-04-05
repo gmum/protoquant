@@ -5,9 +5,9 @@ from typing import Any, Optional
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 
-from .codebooks import BaseCodebookConfig
-from .datasets import BaseDataset
-from .optimizers import BaseOptimizerConfig
+from src.config.codebooks import BaseCodebookConfig
+from src.config.datasets import BaseDataset
+from src.config.optimizers import BaseOptimizerConfig
 
 
 @dataclass
@@ -54,9 +54,11 @@ class MainConfig:
     seed: int = random.randint(0, 1e6)
 
     model: ModelConfig = field(default_factory=ModelConfig)
-    epochs: int = MISSING
     base_optimizer: BaseOptimizerConfig = MISSING
     codebook_optimizer: BaseOptimizerConfig = MISSING
+    
+    epochs: int = MISSING
+    warmup_epochs: int = MISSING
 
     dataset: BaseDataset = MISSING
     train_dataloader: Dataloaders = field(default_factory=Dataloaders)

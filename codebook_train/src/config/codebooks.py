@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
-from codebook import CosineSimilarityCodebook
+from src.codebook import CosineSimilarityCodebook
 
 
 @dataclass

@@ -3,7 +3,9 @@ import torch
 import torch.nn as nn
 import random
 import numpy as np
-from codebook import ConvNextCosineWrapper
+from src.codebook import ConvNextCosineWrapper
+from src.config.main_config import MainConfig
+import hydra
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -74,10 +76,27 @@ def train_epoch_cosine_codebook(
     train_dataloader: torch.utils.data.DataLoader,
     transforms: torch.nn.Module,
     optimizers: list[torch.optim.Optimizer],
+    schedulers: list[torch.optim.lr_scheduler._LRScheduler],
     criterion: nn.Module,
     device: torch.device,
     wandb_run=None,
-) -> None:
+) -> dict[str, float]:
+    """Train a single epoch of the model with cosine codebook
+
+    Args:
+        model (ConvNextCosineWrapper): Wrapper around ConvNext model with cosine codebook
+        train_dataloader (torch.utils.data.DataLoader): DataLoader for training data
+        transforms (torch.nn.Module): Transformations to apply to the input data
+        optimizers (list[torch.optim.Optimizer]): List of optimizers to use
+        schedulers (list[torch.optim.lr_scheduler._LRScheduler]): List of schedulers to use
+        criterion (nn.Module): Loss function to use
+        device (torch.device): Device to use for training
+        wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
+
+    Returns:
+        dict[str, float]: Statistics of the codebook after training
+    """
+
     model.train()
 
     for batch, (images, labels) in enumerate(train_dataloader):
@@ -99,6 +118,10 @@ def train_epoch_cosine_codebook(
         for optimizer in optimizers:
             optimizer.step()
 
+        # Step schedulers after each epoch
+        for scheduler in schedulers:
+            scheduler.step()
+
         if (batch + 1) % (len(train_dataloader) // 10) == 0:
             accuracy = (logits.argmax(1) == labels).float().mean()
             log_dict = {
@@ -117,6 +140,7 @@ def train_epoch_cosine_codebook(
     codebook_statistics = model.codebook.get_statistics()
     model.codebook.reset_statistics()
     return codebook_statistics
+
 
 def validate_epoch_cosine_codebook(
     model: nn.Module, val_dataloader: torch.utils.data.DataLoader, device: torch.device
@@ -163,3 +187,39 @@ def save_checkpoint(path: str, model: nn.Module) -> None:
     """
 
     torch.save(model.state_dict(), path)
+
+
+def create_optimizers(
+    model: nn.Module, codebook: nn.Module, cfg: MainConfig
+) -> list[torch.optim.Optimizer]:
+    """Create optimizers for the model
+
+    Args:
+        model (nn.Module): The model to create optimizers for
+        codebook (nn.Module): The codebook module
+        cfg (MainConfig): The configuration object
+
+    Returns:
+        list[torch.optim.Optimizer]: List of optimizers
+    """
+
+    codebook.requires_grad_(False)
+    base_grad_parameters = [
+        param for param in model.parameters() if param.requires_grad
+    ]
+    codebook.requires_grad_(True)
+
+    optimizers = []
+    if base_grad_parameters:
+        logger.info("Creating separate optimizer for the base model and the codebook")
+        base_optimizer = hydra.utils.instantiate(
+            cfg.base_optimizer, base_grad_parameters
+        )
+        optimizers.append(base_optimizer)
+
+    codebook_optimizer = hydra.utils.instantiate(
+        cfg.codebook_optimizer, codebook.parameters()
+    )
+    optimizers.append(codebook_optimizer)
+
+    return optimizers

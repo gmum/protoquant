@@ -1,8 +1,8 @@
 import torch
 
-from config.main_config import MainConfig
-from .imagenet import get_imagenet1k
-from .cub import get_cub200
+from src.config.main_config import MainConfig
+from src.datasets.imagenet import get_imagenet1k
+from src.datasets.cub import get_cub200
 from torch.utils.data import DataLoader
 
 

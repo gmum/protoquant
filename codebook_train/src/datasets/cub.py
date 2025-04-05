@@ -3,7 +3,7 @@ import pandas as pd
 from torchvision.datasets import VisionDataset
 import torchvision.io as io
 from torch.utils.data import Dataset
-from .imagenet import get_imagenet_transforms
+from src.datasets.imagenet import get_imagenet_transforms
 
 
 class CUB200(VisionDataset):

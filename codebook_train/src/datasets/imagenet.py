@@ -5,7 +5,7 @@ from torchvision.transforms import v2 as transforms_v2
 # import dataloaders
 from torchvision import datasets
 from torch.utils.data import Dataset
-from config.constants import IMAGENET1K_MEAN, IMAGENET1K_STD
+from src.config.constants import IMAGENET1K_MEAN, IMAGENET1K_STD
 
 
 def get_imagenet1k(
