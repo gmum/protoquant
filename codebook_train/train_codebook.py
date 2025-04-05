@@ -41,7 +41,7 @@ def codebook_training(
 ):
     for epoch in range(epochs):
         logger.info(f"Epoch: {epoch}")
-        train_epoch_cosine_codebook(
+        codebook_statistics = train_epoch_cosine_codebook(
             model=model,
             train_dataloader=train_dataloader,
             transforms=train_transforms,
@@ -56,11 +56,14 @@ def codebook_training(
         )
 
         logger.info(f"Validation top1-accuracy {top1_acc}, top5-accuracy {top5_acc}")
+        logger.info(f"Codebook statistics: {codebook_statistics}")
         if wandb_run:
             wandb.log(
                 {
+                    "Epoch": epoch,
                     "Validation Top1 Accuracy": top1_acc,
                     "Validation Top5 Accuracy": top5_acc,
+                    **codebook_statistics,
                 }
             )
 

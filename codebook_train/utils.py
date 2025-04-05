@@ -107,17 +107,16 @@ def train_epoch_cosine_codebook(
                 "Commitment Loss": commitment_loss.item(),
                 "Train Accuracy": accuracy.item(),
             }
-            codebook_statistics = model.codebook.get_statistics()
-            model.codebook.reset_statistics()
 
             if wandb_run:
                 wandb_run.log(log_dict)
-                wandb_run.log(codebook_statistics)
 
             logger.info(f"Batch: {batch + 1} / {len(train_dataloader)}")
             logger.info(log_dict)
-            logger.info(codebook_statistics)
 
+    codebook_statistics = model.codebook.get_statistics()
+    model.codebook.reset_statistics()
+    return codebook_statistics
 
 def validate_epoch_cosine_codebook(
     model: nn.Module, val_dataloader: torch.utils.data.DataLoader, device: torch.device
