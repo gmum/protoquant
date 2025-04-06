@@ -68,12 +68,14 @@ class CosineSimilarityCodebook(nn.Module):
 
 
 class DimReductionWrapper(nn.Module):
+
     def __init__(
         self,
         input_dim: int,
         num_entries: int,
         embedding_dim: int,
-        normalize: bool = True,
+        normalize: bool,
+        activation: str,
     ):
         super().__init__()
         self.num_entries = num_entries
@@ -86,6 +88,15 @@ class DimReductionWrapper(nn.Module):
         self.normalize = normalize
         self.input_norm = nn.LayerNorm(embedding_dim)
         self.output_norm = nn.LayerNorm(input_dim)
+
+        if activation == "gelu":
+            self.activation = nn.GELU()
+        elif activation == "relu":
+            self.activation = nn.ReLU()
+        elif activation == "identity":
+            self.activation = nn.Identity()
+        else:
+            raise ValueError(f"Activation {activation} not supported")
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Quantize the vectors using the Cosine codebook, but with dimensionality reduction.
@@ -103,6 +114,8 @@ class DimReductionWrapper(nn.Module):
 
         quantized, commitment_loss = self.codebook(x_downsampled.permute(0, 3, 1, 2))
         quantized_upsampled = self.upsample(quantized.permute(0, 2, 3, 1))
+        quantized_upsampled = self.activation(quantized_upsampled)
+
         if self.normalize:
             quantized_upsampled = self.output_norm(quantized_upsampled)
 
@@ -118,7 +131,6 @@ class DimReductionWrapper(nn.Module):
 
     def reset_statistics(self):
         self.codebook.reset_statistics()
-
 
 def create_codebook_wrapper(
     model: nn.Module, codebook: nn.Module, model_name: str, unfreeze_before: int
