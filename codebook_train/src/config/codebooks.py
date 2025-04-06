@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
-from src.codebook import CosineSimilarityCodebook
+from src.codebook import CosineSimilarityCodebook, DimReductionWrapper
 
 
 @dataclass
@@ -19,5 +19,16 @@ class CosineSimilarityCodebookConfig(BaseCodebookConfig):
     )
 
 
+@dataclass
+class DimReductionWrapperConfig(BaseCodebookConfig):
+    _target_: str = (
+        f"{DimReductionWrapper.__module__}.{DimReductionWrapper.__qualname__}"
+    )
+    input_dim: int = MISSING
+
+
 config_store = ConfigStore.instance()
 config_store.store(group="codebook", name="cosine", node=CosineSimilarityCodebookConfig)
+config_store.store(
+    group="codebook", name="dim_reduction", node=DimReductionWrapperConfig
+)

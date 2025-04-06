@@ -16,16 +16,14 @@ class CosineSimilarityCodebook(nn.Module):
         self.num_entries = num_entries
         self.register_buffer("code_usage", torch.zeros(num_entries, dtype=torch.long))
 
-    def forward(
-        self, x: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the VQ-VAE loss and quantize the input tensor using cosine similarity.
 
         Args:
             x (torch.Tensor): Input from the last layer.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple with the quantized tensor, codebook loss and alignment loss.
+            tuple[torch.Tensor, torch.Tensor]: Tuple with the quantized tensor and the commitment loss.
         """
 
         assert len(x.shape) == 4
@@ -67,6 +65,59 @@ class CosineSimilarityCodebook(nn.Module):
 
     def reset_statistics(self):
         self.code_usage.zero_()
+
+
+class DimReductionWrapper(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        num_entries: int,
+        embedding_dim: int,
+        normalize: bool = True,
+    ):
+        super().__init__()
+        self.num_entries = num_entries
+        self.embedding_dim = embedding_dim
+
+        self.downsample = nn.Linear(input_dim, embedding_dim)
+        self.upsample = nn.Linear(embedding_dim, input_dim)
+        self.codebook = CosineSimilarityCodebook(num_entries, embedding_dim)
+
+        self.normalize = normalize
+        self.input_norm = nn.LayerNorm(embedding_dim)
+        self.output_norm = nn.LayerNorm(input_dim)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Quantize the vectors using the Cosine codebook, but with dimensionality reduction.
+
+        Args:
+            x (torch.Tensor): Input from the last layer.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: Tuple with the quantized tensor and the commitment loss.
+        """
+
+        x_downsampled = self.downsample(x.permute(0, 2, 3, 1))
+        if self.normalize:
+            x_downsampled = self.input_norm(x_downsampled)
+
+        quantized, commitment_loss = self.codebook(x_downsampled.permute(0, 3, 1, 2))
+        quantized_upsampled = self.upsample(quantized.permute(0, 2, 3, 1))
+        if self.normalize:
+            quantized_upsampled = self.output_norm(quantized_upsampled)
+
+        return quantized_upsampled.permute(0, 3, 1, 2), commitment_loss
+
+    def get_statistics(self) -> dict[str, torch.Tensor]:
+        """Return statistics about the codebook usage.
+
+        Returns:
+            dict[str, torch.Tensor]: Dictionary with the statistics.
+        """
+        return self.codebook.get_statistics()
+
+    def reset_statistics(self):
+        self.codebook.reset_statistics()
 
 
 def create_codebook_wrapper(
