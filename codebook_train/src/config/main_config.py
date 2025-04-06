@@ -38,7 +38,8 @@ class ModelConfig:
 class TrainingConfig:
     unfreeze_before: int = 0  # how many layers to unfreeze before the codebook
     label_smoothing: float = 0.1
-
+    enable_schedulers: bool = True
+    warmup_epochs: int = MISSING
 
 @dataclass
 class MainConfig:
@@ -56,9 +57,8 @@ class MainConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     base_optimizer: BaseOptimizerConfig = MISSING
     codebook_optimizer: BaseOptimizerConfig = MISSING
-    
+
     epochs: int = MISSING
-    warmup_epochs: int = MISSING
 
     dataset: BaseDataset = MISSING
     train_dataloader: Dataloaders = field(default_factory=Dataloaders)

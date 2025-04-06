@@ -223,3 +223,50 @@ def create_optimizers(
     optimizers.append(codebook_optimizer)
 
     return optimizers
+
+
+def create_schedulers(
+    optimizers: list[torch.optim.Optimizer], cfg: MainConfig, epoch_iters: int
+) -> list[torch.optim.lr_scheduler._LRScheduler]:
+    """Create schedulers for the optimizers
+
+    Args:
+        optimizers (list[torch.optim.Optimizer]): List of optimizers
+        cfg (MainConfig): The configuration object
+        epoch_iters (int): Number of iterations per epoch
+
+    Returns:
+        list[torch.optim.lr_scheduler._LRScheduler]: List of schedulers
+    """
+
+    if not cfg.training.enable_schedulers:
+        logger.info("Schedulers are disabled")
+        return []
+
+    schedulers: list[torch.optim.lr_scheduler._LRScheduler] = []
+    logger.info(f"Total iterations: {epoch_iters * cfg.epochs}")
+    linear_scheduler_iters = cfg.training.warmup_epochs * epoch_iters
+    linear_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizers[0],
+        start_factor=0.1,
+        end_factor=1.0,
+        total_iters=linear_scheduler_iters,
+    )
+
+    cosine_iterations = cfg.epochs * epoch_iters - linear_scheduler_iters
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizers[0],
+        T_max=cosine_iterations,
+        eta_min=0.000001,
+    )
+    sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizers[0],
+        schedulers=[linear_scheduler, cosine_scheduler],
+        milestones=[linear_scheduler_iters],
+    )
+
+    schedulers.append(sequential_scheduler)
+    logger.info(f"Warmup iterations: {linear_scheduler_iters}")
+    logger.info(f"Cosine iterations: {cosine_iterations}")
+
+    return schedulers
