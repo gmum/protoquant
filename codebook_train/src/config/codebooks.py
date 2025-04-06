@@ -26,7 +26,8 @@ class DimReductionWrapperConfig(BaseCodebookConfig):
     )
     input_dim: int = MISSING
     activation: str = "identity"
-    normalize: bool = True
+    normalize_in: bool = False
+    normalize_out: bool = False
 
 
 config_store = ConfigStore.instance()

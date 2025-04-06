@@ -74,7 +74,8 @@ class DimReductionWrapper(nn.Module):
         input_dim: int,
         num_entries: int,
         embedding_dim: int,
-        normalize: bool,
+        normalize_in: bool,
+        normalize_out: bool,
         activation: str,
     ):
         super().__init__()
@@ -85,9 +86,8 @@ class DimReductionWrapper(nn.Module):
         self.upsample = nn.Linear(embedding_dim, input_dim)
         self.codebook = CosineSimilarityCodebook(num_entries, embedding_dim)
 
-        self.normalize = normalize
-        self.input_norm = nn.LayerNorm(embedding_dim)
-        self.output_norm = nn.LayerNorm(input_dim)
+        self.input_norm = nn.LayerNorm(embedding_dim) if normalize_in else nn.Identity()
+        self.output_norm = nn.LayerNorm(input_dim) if normalize_out else nn.Identity()
 
         if activation == "gelu":
             self.activation = nn.GELU()
@@ -109,15 +109,12 @@ class DimReductionWrapper(nn.Module):
         """
 
         x_downsampled = self.downsample(x.permute(0, 2, 3, 1))
-        if self.normalize:
-            x_downsampled = self.input_norm(x_downsampled)
+        x_downsampled = self.input_norm(x_downsampled)
 
         quantized, commitment_loss = self.codebook(x_downsampled.permute(0, 3, 1, 2))
         quantized_upsampled = self.upsample(quantized.permute(0, 2, 3, 1))
         quantized_upsampled = self.activation(quantized_upsampled)
-
-        if self.normalize:
-            quantized_upsampled = self.output_norm(quantized_upsampled)
+        quantized_upsampled = self.output_norm(quantized_upsampled)
 
         return quantized_upsampled.permute(0, 3, 1, 2), commitment_loss
 
