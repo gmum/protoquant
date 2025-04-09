@@ -2,6 +2,8 @@ import torch
 from torch import nn
 import logging
 
+from src.custom_layers import LinearGELUNorm
+
 logger = logging.getLogger(__name__)
 
 class CosineSimilarityCodebook(nn.Module):
@@ -74,29 +76,23 @@ class DimReductionWrapper(nn.Module):
         input_dim: int,
         num_entries: int,
         embedding_dim: int,
-        normalize_in: bool,
-        normalize_out: bool,
-        activation: str,
+        in_block_config: list[int],
+        out_block_config: list[int],
     ):
         super().__init__()
         self.num_entries = num_entries
         self.embedding_dim = embedding_dim
-
-        self.downsample = nn.Linear(input_dim, embedding_dim)
-        self.upsample = nn.Linear(embedding_dim, input_dim)
         self.codebook = CosineSimilarityCodebook(num_entries, embedding_dim)
 
-        self.input_norm = nn.LayerNorm(embedding_dim) if normalize_in else nn.Identity()
-        self.output_norm = nn.LayerNorm(input_dim) if normalize_out else nn.Identity()
+        in_block = LinearGELUNorm.construct_layers([input_dim] + in_block_config)
+        out_block = LinearGELUNorm.construct_layers([embedding_dim] + out_block_config)
+        self.in_block = nn.Sequential(*in_block)
+        self.out_block = nn.Sequential(*out_block)
 
-        if activation == "gelu":
-            self.activation = nn.GELU()
-        elif activation == "relu":
-            self.activation = nn.ReLU()
-        elif activation == "identity":
-            self.activation = nn.Identity()
-        else:
-            raise ValueError(f"Activation {activation} not supported")
+        last_dim = in_block_config[-1] if in_block_config else embedding_dim
+        assert (
+            last_dim == input_dim
+        ), f"Last dimension doesn't match the input dimension: {last_dim} != {input_dim}"
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Quantize the vectors using the Cosine codebook, but with dimensionality reduction.
@@ -108,15 +104,11 @@ class DimReductionWrapper(nn.Module):
             tuple[torch.Tensor, torch.Tensor]: Tuple with the quantized tensor and the commitment loss.
         """
 
-        x_downsampled = self.downsample(x.permute(0, 2, 3, 1))
-        x_downsampled = self.input_norm(x_downsampled)
+        x = self.in_block(x.permute(0, 2, 3, 1))
+        quantized, commitment_loss = self.codebook(x.permute(0, 3, 1, 2))
+        quantized = self.out_block(quantized.permute(0, 2, 3, 1))
 
-        quantized, commitment_loss = self.codebook(x_downsampled.permute(0, 3, 1, 2))
-        quantized_upsampled = self.upsample(quantized.permute(0, 2, 3, 1))
-        quantized_upsampled = self.activation(quantized_upsampled)
-        quantized_upsampled = self.output_norm(quantized_upsampled)
-
-        return quantized_upsampled.permute(0, 3, 1, 2), commitment_loss
+        return quantized.permute(0, 3, 1, 2), commitment_loss
 
     def get_statistics(self) -> dict[str, torch.Tensor]:
         """Return statistics about the codebook usage.

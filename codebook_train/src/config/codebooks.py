@@ -25,9 +25,8 @@ class DimReductionWrapperConfig(BaseCodebookConfig):
         f"{DimReductionWrapper.__module__}.{DimReductionWrapper.__qualname__}"
     )
     input_dim: int = MISSING
-    activation: str = "identity"
-    normalize_in: bool = False
-    normalize_out: bool = False
+    in_block_config: list[int] = MISSING
+    out_block_config: list[int] = MISSING
 
 
 config_store = ConfigStore.instance()

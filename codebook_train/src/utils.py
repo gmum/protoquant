@@ -244,7 +244,9 @@ def create_schedulers(
         return []
 
     schedulers: list[torch.optim.lr_scheduler._LRScheduler] = []
-    logger.info(f"Total iterations: {epoch_iters * cfg.epochs}")
+    total_iterations = epoch_iters * cfg.epochs
+    logger.info(f"Total iterations: {total_iterations}")
+
     linear_scheduler_iters = cfg.training.warmup_epochs * epoch_iters
     linear_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizers[0],
@@ -253,10 +255,14 @@ def create_schedulers(
         total_iters=linear_scheduler_iters,
     )
 
-    cosine_iterations = cfg.epochs * epoch_iters - linear_scheduler_iters
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    cosine_cycles = 3
+    remaining_iterations = total_iterations - linear_scheduler_iters
+    initial_cycle_length = remaining_iterations // (2**cosine_cycles - 1)
+
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizers[0],
-        T_max=cosine_iterations,
+        T_0=initial_cycle_length,
+        T_mult=2,
         eta_min=0.000001,
     )
     sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
@@ -267,6 +273,8 @@ def create_schedulers(
 
     schedulers.append(sequential_scheduler)
     logger.info(f"Warmup iterations: {linear_scheduler_iters}")
-    logger.info(f"Cosine iterations: {cosine_iterations}")
+    logger.info(
+        f"Cosine iterations: {[initial_cycle_length * 2**i for i in range(1, cosine_cycles + 1)]}"
+    )
 
     return schedulers
