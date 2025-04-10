@@ -7,12 +7,20 @@ from src.custom_layers import LinearGELUNorm
 logger = logging.getLogger(__name__)
 
 class CosineSimilarityCodebook(nn.Module):
-    def __init__(self, num_entries: int, embedding_dim: int):
+
+    def __init__(
+        self, num_entries: int, embedding_dim: int, mapping_dim_config: list[int]
+    ):
         super().__init__()
         self.embeddings = nn.Embedding(num_entries, embedding_dim)
         nn.init.orthogonal_(
             self.embeddings.weight,
         )
+
+        mapping_layers = LinearGELUNorm.construct_layers(
+            [embedding_dim] + mapping_dim_config
+        )
+        self.codebook_mapping = nn.Sequential(*mapping_layers)
 
         # Add tracking buffers
         self.num_entries = num_entries
@@ -34,12 +42,12 @@ class CosineSimilarityCodebook(nn.Module):
         x = x.view(B, C, H * W).permute(0, 2, 1)
 
         with torch.no_grad():
-            c = self.embeddings.weight
+            mapped_codes = self.codebook_mapping(self.embeddings.weight)
 
             x_unit = torch.functional.F.normalize(x, dim=-1)
-            c_unit = torch.functional.F.normalize(c, dim=-1)
+            mapped_codes_unit = torch.functional.F.normalize(mapped_codes, dim=-1)
 
-            sim = x_unit @ c_unit.t()
+            sim = x_unit @ mapped_codes_unit.t()
             indices = torch.argmax(sim, dim=-1)
 
             if self.training:
@@ -47,7 +55,7 @@ class CosineSimilarityCodebook(nn.Module):
                 count = torch.bincount(indices.view(-1), minlength=self.num_entries)
                 self.code_usage += count.long()
 
-        quantized = self.embeddings(indices)
+        quantized = self.codebook_mapping(self.embeddings(indices))
 
         commitment_loss = torch.functional.F.mse_loss(quantized, x.detach())
         quantized = quantized.view(B, H, W, C).permute(0, 3, 1, 2)
@@ -78,11 +86,14 @@ class DimReductionWrapper(nn.Module):
         embedding_dim: int,
         in_block_config: list[int],
         out_block_config: list[int],
+        mapping_dim_config: list[int],
     ):
         super().__init__()
         self.num_entries = num_entries
         self.embedding_dim = embedding_dim
-        self.codebook = CosineSimilarityCodebook(num_entries, embedding_dim)
+        self.codebook = CosineSimilarityCodebook(
+            num_entries, embedding_dim, mapping_dim_config
+        )
 
         in_block = LinearGELUNorm.construct_layers([input_dim] + in_block_config)
         out_block = LinearGELUNorm.construct_layers([embedding_dim] + out_block_config)

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
@@ -17,6 +17,7 @@ class CosineSimilarityCodebookConfig(BaseCodebookConfig):
     _target_: str = (
         f"{CosineSimilarityCodebook.__module__}.{CosineSimilarityCodebook.__qualname__}"
     )
+    mapping_dim_config: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -27,6 +28,7 @@ class DimReductionWrapperConfig(BaseCodebookConfig):
     input_dim: int = MISSING
     in_block_config: list[int] = MISSING
     out_block_config: list[int] = MISSING
+    mapping_dim_config: list[int] = field(default_factory=list)
 
 
 config_store = ConfigStore.instance()
