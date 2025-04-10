@@ -91,13 +91,14 @@ class DimReductionWrapper(nn.Module):
         super().__init__()
         self.num_entries = num_entries
         self.embedding_dim = embedding_dim
+
+        in_block = LinearGELUNorm.construct_layers([input_dim] + in_block_config)
+        self.in_block = nn.Sequential(*in_block)
         self.codebook = CosineSimilarityCodebook(
             num_entries, embedding_dim, mapping_dim_config
         )
 
-        in_block = LinearGELUNorm.construct_layers([input_dim] + in_block_config)
         out_block = LinearGELUNorm.construct_layers([embedding_dim] + out_block_config)
-        self.in_block = nn.Sequential(*in_block)
         self.out_block = nn.Sequential(*out_block)
 
         last_dim = in_block_config[-1] if in_block_config else embedding_dim
