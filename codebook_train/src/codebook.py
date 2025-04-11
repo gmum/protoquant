@@ -71,6 +71,9 @@ class CosineSimilarityCodebook(nn.Module):
         return {
             "code_usage": self.code_usage.clone(),
             "dead_ratio": (self.code_usage == 0).float().mean(),
+            "median_usage": torch.median(self.code_usage.float()).item(),
+            "max_usage": torch.max(self.code_usage.float()).item(),
+            "min_usage": torch.min(self.code_usage.float()).item(),
         }
 
     def reset_statistics(self):
