@@ -40,6 +40,7 @@ def codebook_training(
     criterion: nn.Module,
     device: torch.device,
     epochs: int,
+    restart_threshold: int,
     wandb_run=None,
 ):
     for epoch in range(epochs):
@@ -52,6 +53,7 @@ def codebook_training(
             schedulers=schedulers,
             criterion=criterion,
             device=device,
+            restart_threshold=restart_threshold,
             wandb_run=wandb_run,
         )
 
@@ -137,6 +139,7 @@ def prepare_codebook_training(
         criterion=criterion,
         device=device,
         epochs=cfg.epochs,
+        restart_threshold=cfg.training.restart_threshold,
         wandb_run=wandb_run,
     )
 

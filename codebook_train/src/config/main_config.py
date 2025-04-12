@@ -40,6 +40,7 @@ class TrainingConfig:
     label_smoothing: float = 0.1
     enable_schedulers: bool = True
     warmup_epochs: int = MISSING
+    restart_threshold: int = -1
 
 @dataclass
 class MainConfig:

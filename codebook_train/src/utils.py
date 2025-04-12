@@ -79,6 +79,7 @@ def train_epoch_cosine_codebook(
     schedulers: list[torch.optim.lr_scheduler._LRScheduler],
     criterion: nn.Module,
     device: torch.device,
+    restart_threshold: int,
     wandb_run=None,
 ) -> dict[str, float]:
     """Train a single epoch of the model with cosine codebook
@@ -91,6 +92,7 @@ def train_epoch_cosine_codebook(
         schedulers (list[torch.optim.lr_scheduler._LRScheduler]): List of schedulers to use
         criterion (nn.Module): Loss function to use
         device (torch.device): Device to use for training
+        restart_threshold (int): Threshold for restarting the codebook.
         wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
 
     Returns:
@@ -137,8 +139,12 @@ def train_epoch_cosine_codebook(
             logger.info(f"Batch: {batch + 1} / {len(train_dataloader)}")
             logger.info(log_dict)
 
+    if restart_threshold >= 0:
+        model.codebook.restart_codes(restart_threshold)
+
     codebook_statistics = model.codebook.get_statistics()
     model.codebook.reset_statistics()
+
     return codebook_statistics
 
 

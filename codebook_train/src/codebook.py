@@ -9,7 +9,10 @@ logger = logging.getLogger(__name__)
 class CosineSimilarityCodebook(nn.Module):
 
     def __init__(
-        self, num_entries: int, embedding_dim: int, mapping_dim_config: list[int]
+        self,
+        num_entries: int,
+        embedding_dim: int,
+        mapping_dim_config: list[int],
     ):
         super().__init__()
         self.embeddings = nn.Embedding(num_entries, embedding_dim)
@@ -25,6 +28,26 @@ class CosineSimilarityCodebook(nn.Module):
         # Add tracking buffers
         self.num_entries = num_entries
         self.register_buffer("code_usage", torch.zeros(num_entries, dtype=torch.long))
+        self.register_buffer(
+            "restarted_count", torch.zeros(num_entries, dtype=torch.long)
+        )
+
+    def restart_codes(self, restart_threshold: int) -> None:
+        """Restart the codebook by reinitializing the embeddings under the threshold.
+
+        Args:
+            restart_threshold (int): The threshold for restarting the codebook.
+        """
+
+        # Restart the codebook by reinitializing the embeddings under the threshold
+        to_restart = self.code_usage <= restart_threshold
+        to_restart_indices = torch.nonzero(to_restart, as_tuple=False).squeeze()
+
+        if len(to_restart_indices) > 0:
+            nn.init.orthogonal_(
+                self.embeddings.weight.data[to_restart_indices],
+            )
+            self.restarted_count[to_restart_indices] += 1
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the VQ-VAE loss and quantize the input tensor using cosine similarity.
@@ -74,10 +97,13 @@ class CosineSimilarityCodebook(nn.Module):
             "median_usage": torch.median(self.code_usage.float()).item(),
             "max_usage": torch.max(self.code_usage.float()).item(),
             "min_usage": torch.min(self.code_usage.float()).item(),
+            "restarted_count": self.restarted_count.clone(),
+            "restart_ratio": (self.restarted_count > 0).float().mean(),
         }
 
     def reset_statistics(self):
         self.code_usage.zero_()
+        self.restarted_count.zero_()
 
 
 class DimReductionWrapper(nn.Module):
@@ -135,6 +161,16 @@ class DimReductionWrapper(nn.Module):
 
     def reset_statistics(self):
         self.codebook.reset_statistics()
+
+    def restart_codes(self, restart_threshold: int) -> None:
+        """Restart the codebook by reinitializing the embeddings under the threshold.
+
+        Args:
+            restart_threshold (int): The threshold for restarting the codebook.
+        """
+
+        self.codebook.restart_codes(restart_threshold)
+
 
 def create_codebook_wrapper(
     model: nn.Module, codebook: nn.Module, model_name: str, unfreeze_before: int

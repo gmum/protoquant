@@ -30,7 +30,6 @@ class DimReductionWrapperConfig(BaseCodebookConfig):
     out_block_config: list[int] = MISSING
     mapping_dim_config: list[int] = field(default_factory=list)
 
-
 config_store = ConfigStore.instance()
 config_store.store(group="codebook", name="cosine", node=CosineSimilarityCodebookConfig)
 config_store.store(
