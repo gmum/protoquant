@@ -78,6 +78,7 @@ def train_epoch_cosine_codebook(
     optimizers: list[torch.optim.Optimizer],
     schedulers: list[torch.optim.lr_scheduler._LRScheduler],
     criterion: nn.Module,
+    enable_task_loss: bool,
     device: torch.device,
     restart_threshold: int,
     wandb_run=None,
@@ -91,6 +92,7 @@ def train_epoch_cosine_codebook(
         optimizers (list[torch.optim.Optimizer]): List of optimizers to use
         schedulers (list[torch.optim.lr_scheduler._LRScheduler]): List of schedulers to use
         criterion (nn.Module): Loss function to use
+        enable_task_loss (bool): Whether to enable task loss
         device (torch.device): Device to use for training
         restart_threshold (int): Threshold for restarting the codebook.
         wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
@@ -108,11 +110,14 @@ def train_epoch_cosine_codebook(
         for optimizer in optimizers:
             optimizer.zero_grad()
 
-        logits, commitment_loss = model(transformed_images)
+        logits, codebook_loss = model(transformed_images)
         task_loss = criterion(logits, transformed_labels)
 
         # Combine losses
-        total_loss = task_loss + commitment_loss
+        if enable_task_loss:
+            total_loss = task_loss + codebook_loss
+        else:
+            total_loss = codebook_loss
 
         # Backward pass
         total_loss.backward()
@@ -129,7 +134,7 @@ def train_epoch_cosine_codebook(
             log_dict = {
                 "Train Loss": total_loss.item(),
                 "Task Loss": task_loss.item(),
-                "Commitment Loss": commitment_loss.item(),
+                "Codebook Loss": codebook_loss.item(),
                 "Train Accuracy": accuracy.item(),
             }
 
