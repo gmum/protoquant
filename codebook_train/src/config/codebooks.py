@@ -2,8 +2,11 @@ from dataclasses import dataclass, field
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
-from src.codebook import CosineSimilarityCodebook, DimReductionWrapper
-
+from src.codebook import (
+    CosineSimilarityCodebook,
+    DimReductionWrapper,
+    VectorQuantizeCodebook,
+)
 
 @dataclass
 class BaseCodebookConfig:
@@ -30,8 +33,19 @@ class DimReductionWrapperConfig(BaseCodebookConfig):
     out_block_config: list[int] = MISSING
     mapping_dim_config: list[int] = field(default_factory=list)
 
+
+@dataclass
+class VectorQuantizeCodebookConfig(BaseCodebookConfig):
+    _target_: str = (
+        f"{VectorQuantizeCodebook.__module__}.{VectorQuantizeCodebook.__qualname__}"
+    )
+
+
 config_store = ConfigStore.instance()
 config_store.store(group="codebook", name="cosine", node=CosineSimilarityCodebookConfig)
 config_store.store(
     group="codebook", name="dim_reduction", node=DimReductionWrapperConfig
+)
+config_store.store(
+    group="codebook", name="vector_quantize", node=VectorQuantizeCodebookConfig
 )

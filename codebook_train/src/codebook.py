@@ -1,10 +1,69 @@
 import torch
 from torch import nn
 import logging
-
+from vector_quantize_pytorch import VectorQuantize
 from src.custom_layers import LinearGELUNorm
 
 logger = logging.getLogger(__name__)
+
+
+class VectorQuantizeCodebook(nn.Module):
+    def __init__(
+        self,
+        embedding_dim: int,
+        num_entries: int,
+        **kwargs,
+    ):
+        super().__init__()
+        self.num_entries = num_entries
+        self.quantizer = VectorQuantize(
+            codebook_size=num_entries,
+            dim=embedding_dim,
+            **kwargs,
+        )
+        self.register_buffer("code_usage", torch.zeros(num_entries, dtype=torch.long))
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Quantize the vectors using the VQ-VAE codebook.
+
+        Args:
+            x (torch.Tensor): Input from the last layer.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: Tuple with the quantized tensor and the commitment loss.
+        """
+        assert len(x.shape) == 4
+
+        B, C, H, W = x.shape
+        x = x.view(B, C, H * W).permute(0, 2, 1)  # (B, H*W, C)
+
+        quantized, indices, loss = self.quantizer(x)
+        quantized = quantized.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
+
+        self.code_usage += torch.bincount(
+            indices.view(-1), minlength=self.num_entries
+        ).long()
+
+        return quantized, loss
+
+    def get_statistics(self) -> dict[str, torch.Tensor]:
+        """Return statistics about the codebook usage.
+
+        Returns:
+            dict[str, torch.Tensor]: Dictionary with the statistics.
+        """
+
+        return {
+            "code_usage": self.code_usage.clone(),
+            "dead_ratio": (self.code_usage == 0).float().mean(),
+            "median_usage": torch.median(self.code_usage.float()).item(),
+            "max_usage": torch.max(self.code_usage.float()).item(),
+            "min_usage": torch.min(self.code_usage.float()).item(),
+        }
+
+    def reset_statistics(self):
+        self.code_usage.zero_()
+
 
 class CosineSimilarityCodebook(nn.Module):
 
@@ -43,11 +102,43 @@ class CosineSimilarityCodebook(nn.Module):
         to_restart = self.code_usage <= restart_threshold
         to_restart_indices = torch.nonzero(to_restart, as_tuple=False).squeeze()
 
-        if len(to_restart_indices) > 0:
-            nn.init.orthogonal_(
-                self.embeddings.weight.data[to_restart_indices],
-            )
-            self.restarted_count[to_restart_indices] += 1
+        if len(to_restart_indices) == 0:
+            return
+
+        # Get the most used codes to draw inspiration from
+        active_indices = (-self.code_usage).argsort()[
+            : self.num_entries // 2
+        ]  # Top 100 most used codes
+        # Take inspiration from successful codes but add noise
+        sample_indices = torch.randint(
+            0, len(active_indices), (len(to_restart_indices),)
+        )
+        source_embeddings = self.embeddings.weight[active_indices[sample_indices]]
+
+        # Add noise proportional to the magnitude of the embeddings
+        noise_scale = 0.1 * torch.norm(source_embeddings, dim=1, keepdim=True)
+        noise = torch.randn_like(source_embeddings) * noise_scale
+        new_embeddings = source_embeddings + noise
+
+        # Update the dead codes with the new embeddings
+        self.embeddings.weight.data[to_restart_indices] = new_embeddings
+        self.restarted_count[to_restart_indices] += 1
+
+    def calculate_similarity(
+        self, x: torch.Tensor, codes: torch.Tensor
+    ) -> torch.Tensor:
+        """Calculate the cosine similarity between the input tensor and the codebook.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            codes (torch.Tensor): Codebook tensor.
+
+        Returns:
+            torch.Tensor: Cosine similarity scores.
+        """
+        x_unit = torch.functional.F.normalize(x, dim=-1)
+        codes_unit = torch.functional.F.normalize(codes, dim=-1)
+        return x_unit @ codes_unit.t()
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the VQ-VAE loss and quantize the input tensor using cosine similarity.
@@ -66,19 +157,17 @@ class CosineSimilarityCodebook(nn.Module):
 
         with torch.no_grad():
             mapped_codes = self.codebook_mapping(self.embeddings.weight)
-
-            x_unit = torch.functional.F.normalize(x, dim=-1)
-            mapped_codes_unit = torch.functional.F.normalize(mapped_codes, dim=-1)
-
-            sim = x_unit @ mapped_codes_unit.t()
-            indices = torch.argmax(sim, dim=-1)
+            similarity = self.calculate_similarity(x, mapped_codes)
+            code_indices = torch.argmax(similarity, dim=-1)
 
             if self.training:
                 # sum over batch dim
-                count = torch.bincount(indices.view(-1), minlength=self.num_entries)
+                count = torch.bincount(
+                    code_indices.view(-1), minlength=self.num_entries
+                )
                 self.code_usage += count.long()
 
-        quantized = self.codebook_mapping(self.embeddings(indices))
+        quantized = self.codebook_mapping(self.embeddings(code_indices))
 
         commitment_loss = torch.functional.F.mse_loss(quantized, x.detach())
         quantized = quantized.view(B, H, W, C).permute(0, 3, 1, 2)
