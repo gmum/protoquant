@@ -41,7 +41,9 @@ class TrainingConfig:
     enable_schedulers: bool = True
     warmup_epochs: int = MISSING
     restart_threshold: int = -1
-    enable_task_loss: bool = True
+
+    task_loss_weight: float = 1.0
+    codebook_loss_weight: float = 1.0
 
 @dataclass
 class MainConfig:

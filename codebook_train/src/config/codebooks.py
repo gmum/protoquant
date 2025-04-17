@@ -43,6 +43,7 @@ class VectorQuantizeCodebookConfig(BaseCodebookConfig):
 
     learnable_codebook: bool = True
     ema_update: bool = False
+    layernorm_after_project_in: bool = True
 
     # general
     decay: float = 0.8
