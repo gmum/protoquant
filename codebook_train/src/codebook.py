@@ -72,8 +72,10 @@ class CosineSimilarityCodebook(nn.Module):
         num_entries: int,
         embedding_dim: int,
         mapping_dim_config: list[int],
+        entropy_loss_weight: float,
     ):
         super().__init__()
+        self.entropy_weight = entropy_loss_weight
         self.embeddings = nn.Embedding(num_entries, embedding_dim)
         nn.init.orthogonal_(
             self.embeddings.weight,
@@ -90,6 +92,38 @@ class CosineSimilarityCodebook(nn.Module):
         self.register_buffer(
             "restarted_count", torch.zeros(num_entries, dtype=torch.long)
         )
+
+    def calculate_entropy_loss(self, code_indices: torch.Tensor) -> torch.Tensor:
+        """Calculate entropy loss to encourage uniform codebook usage.
+
+        Args:
+            code_indices (torch.Tensor): Indices of selected codes for the batch
+
+        Returns:
+            torch.Tensor: Entropy loss
+        """
+        # Calculate histogram of code usage in current batch
+        batch_histogram = torch.bincount(
+            code_indices.view(-1), minlength=self.num_entries
+        ).float()
+
+        # Convert to probability distribution (normalize)
+        batch_probs = batch_histogram / (batch_histogram.sum() + 1e-8)
+
+        # Calculate entropy: -sum(p_i * log(p_i))
+        # Adding small epsilon to avoid log(0)
+        entropy = -torch.sum(batch_probs * torch.log(batch_probs + 1e-8))
+
+        # We want to maximize entropy, so return negative entropy as loss
+        # Normalize by log(num_entries) to keep loss in reasonable range
+        max_entropy = torch.log(
+            torch.tensor(self.num_entries, dtype=torch.float, device=batch_probs.device)
+        )
+        entropy_loss = 1.0 - (
+            entropy / max_entropy
+        )  # Normalized [0,1] where 0 is uniform distribution
+
+        return entropy_loss * self.entropy_weight
 
     def restart_codes(self, restart_threshold: int) -> None:
         """Restart the codebook by reinitializing the embeddings under the threshold.
@@ -168,11 +202,14 @@ class CosineSimilarityCodebook(nn.Module):
                 self.code_usage += count.long()
 
         quantized = self.codebook_mapping(self.embeddings(code_indices))
-
         commitment_loss = torch.functional.F.mse_loss(quantized, x.detach())
         quantized = quantized.view(B, H, W, C).permute(0, 3, 1, 2)
 
-        return quantized, commitment_loss
+        # Calculate entropy loss
+        entropy_loss = self.calculate_entropy_loss(code_indices)
+        codebook_loss = commitment_loss + self.entropy_weight * entropy_loss
+
+        return quantized, codebook_loss
 
     def get_statistics(self) -> dict[str, torch.Tensor]:
         """Return statistics about the codebook usage.
@@ -205,6 +242,7 @@ class DimReductionWrapper(nn.Module):
         in_block_config: list[int],
         out_block_config: list[int],
         mapping_dim_config: list[int],
+        entropy_loss_weight: float,
     ):
         super().__init__()
         self.num_entries = num_entries
@@ -213,7 +251,7 @@ class DimReductionWrapper(nn.Module):
         in_block = LinearGELUNorm.construct_layers([input_dim] + in_block_config)
         self.in_block = nn.Sequential(*in_block)
         self.codebook = CosineSimilarityCodebook(
-            num_entries, embedding_dim, mapping_dim_config
+            num_entries, embedding_dim, mapping_dim_config, entropy_loss_weight
         )
 
         out_block = LinearGELUNorm.construct_layers([embedding_dim] + out_block_config)
