@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 import torch
 import torch.nn as nn
 import random
@@ -83,7 +84,7 @@ def train_epoch_cosine_codebook(
     device: torch.device,
     restart_threshold: int,
     wandb_run=None,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Train a single epoch of the model with cosine codebook
 
     Args:
@@ -130,10 +131,10 @@ def train_epoch_cosine_codebook(
         if (batch + 1) % (len(train_dataloader) // 10) == 0:
             accuracy = (logits.argmax(1) == labels).float().mean()
             log_dict = {
-                "Train Loss": total_loss.item(),
+                "Total Loss": total_loss.item(),
                 "Task Loss": task_loss.item(),
                 "Codebook Loss": codebook_loss.item(),
-                "Train Accuracy": accuracy.item(),
+                "Top1 Accuracy": accuracy.item(),
             }
 
             if wandb_run:
@@ -153,10 +154,20 @@ def train_epoch_cosine_codebook(
 
 def validate_epoch_cosine_codebook(
     model: nn.Module, val_dataloader: torch.utils.data.DataLoader, device: torch.device
-) -> tuple[float, float]:
+) -> dict[str, Any]:
+    """Validate the model for a single epoch
+
+    Args:
+        model (nn.Module): The model to validate
+        val_dataloader (torch.utils.data.DataLoader): DataLoader for validation data
+        device (torch.device): Device to use for validation
+
+    Returns:
+        dict[str, Any]: Statistics of the codebook after validation
+    """
+
     model.eval()
     top1_correct, top5_correct, total = 0, 0, 0
-
     with torch.no_grad():
         for inputs, labels in val_dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
@@ -170,7 +181,13 @@ def validate_epoch_cosine_codebook(
 
     top1_acc = (top1_correct / total) * 100
     top5_acc = (top5_correct / total) * 100
-    return top1_acc, top5_acc
+
+    codebook_statistics = model.codebook.get_statistics()
+    model.codebook.reset_statistics()
+    codebook_statistics["Top1 Accuracy"] = top1_acc
+    codebook_statistics["Top5 Accuracy"] = top5_acc
+
+    return codebook_statistics
 
 
 def set_reproducibility(seed: int) -> None:

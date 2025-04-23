@@ -123,7 +123,7 @@ class CosineSimilarityCodebook(nn.Module):
             entropy / max_entropy
         )  # Normalized [0,1] where 0 is uniform distribution
 
-        return entropy_loss * self.entropy_weight
+        return entropy_loss
 
     def restart_codes(self, restart_threshold: int) -> None:
         """Restart the codebook by reinitializing the embeddings under the threshold.
@@ -194,12 +194,9 @@ class CosineSimilarityCodebook(nn.Module):
             similarity = self.calculate_similarity(x, mapped_codes)
             code_indices = torch.argmax(similarity, dim=-1)
 
-            if self.training:
-                # sum over batch dim
-                count = torch.bincount(
-                    code_indices.view(-1), minlength=self.num_entries
-                )
-                self.code_usage += count.long()
+            # sum over batch dim
+            count = torch.bincount(code_indices.view(-1), minlength=self.num_entries)
+            self.code_usage += count.long()
 
         quantized = self.codebook_mapping(self.embeddings(code_indices))
         commitment_loss = torch.functional.F.mse_loss(quantized, x.detach())
