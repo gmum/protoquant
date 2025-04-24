@@ -6,18 +6,15 @@ from src.codebook import create_codebook_wrapper, ConvNextCosineWrapper
 from src.construct_model import construct_model
 from src.datasets.construct_dataset import get_dataloaders
 from src.utils import (
-    create_schedulers,
     validate_epoch,
     set_reproducibility,
     save_checkpoint,
-    create_optimizers,
     validate_epoch_cosine_codebook,
 )
 from datetime import datetime
 import logging
 import hydra
 from src.config.pruning_config import PruningConfig
-from torchvision.transforms import v2 as transforms_v2
 
 
 logging.basicConfig(level=logging.INFO)
@@ -115,10 +112,15 @@ def prepare_codebook_pruning(
     if cfg.output_checkpoint_path is not None:
         hydra_path = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
         current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        out_codebook_path = (
+            hydra_path
+            / f"pruned_{cfg.target_num_codes}_{cfg.model.name}_codebook_{current_date}.pth"
+        )
         save_checkpoint(
             model=codebook,
-            path=hydra_path / f"pruned_{cfg.model.name}_codebook_{current_date}.pth",
+            path=out_codebook_path,
         )
+        logger.info(f"Saved pruned codebook to {out_codebook_path}")
 
 
 def codebook_pruning(
