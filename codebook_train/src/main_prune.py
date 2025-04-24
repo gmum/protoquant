@@ -161,6 +161,21 @@ def codebook_pruning(
 
         model.codebook.reset_statistics()
 
+    # final validation
+    logger.info("Final validation after pruning")
+    val_statistics = validate_epoch_cosine_codebook(
+        model=model, val_dataloader=val_dataloader, device=device
+    )
+    val_statistics = {f"val_{k}": v for k, v in val_statistics.items()}
+    logger.info(f"Validation statistics: {val_statistics}")
+    if wandb_run:
+        wandb.log(
+            {
+                "Step": steps,
+                **val_statistics,
+            }
+        )
+
 
 def prune_codebook_embeddings(codebook, codes_to_remove):
     """Prune the codebook by removing specified codes and creating a smaller embedding matrix.
