@@ -2,7 +2,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
-from src.codebook import create_codebook_wrapper
+from src.codebook_wrappers import create_codebook_wrapper
 from src.construct_model import construct_model
 from src.datasets.construct_dataset import get_dataloaders
 from src.utils import (

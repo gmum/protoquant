@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import random
 import numpy as np
-from src.codebook import ConvNextCosineWrapper
+from src.codebook_wrappers import CNNCodebookWrapper
 from src.config.main_config import MainConfig
 import hydra
 
@@ -73,7 +73,7 @@ def train_epoch(
 
 
 def train_epoch_cosine_codebook(
-    model: ConvNextCosineWrapper,
+    model: CNNCodebookWrapper,
     train_dataloader: torch.utils.data.DataLoader,
     transforms: torch.nn.Module,
     optimizers: list[torch.optim.Optimizer],
@@ -88,7 +88,7 @@ def train_epoch_cosine_codebook(
     """Train a single epoch of the model with cosine codebook
 
     Args:
-        model (ConvNextCosineWrapper): Wrapper around ConvNext model with cosine codebook
+        model (CNNCodebookWrapper): Wrapper around ConvNext model with cosine codebook
         train_dataloader (torch.utils.data.DataLoader): DataLoader for training data
         transforms (torch.nn.Module): Transformations to apply to the input data
         optimizers (list[torch.optim.Optimizer]): List of optimizers to use
