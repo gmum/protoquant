@@ -304,3 +304,21 @@ def create_schedulers(
     )
 
     return schedulers
+
+
+def calculate_accuracy(output: torch.Tensor, target: torch.Tensor) -> float:
+    """Computes the accuracy of the model's predictions.
+
+    Args:
+        output (torch.Tensor): The output from the model.
+        target (torch.Tensor): The ground truth labels.
+
+    Returns:
+        float: The accuracy.
+    """
+
+    with torch.no_grad():
+        pred = output.argmax(dim=1, keepdim=True)
+        correct = pred.eq(target.view_as(pred)).sum().item()
+        acc = correct / target.size(0)
+        return acc * 100

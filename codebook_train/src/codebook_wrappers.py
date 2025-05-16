@@ -67,6 +67,12 @@ def create_codebook_wrapper(
                 model.classifier,
             ),
         )
+    elif model_name.endswith("backbone"):
+        codebook_wrapper = CNNCodebookWrapper(
+            features=model,
+            codebook=codebook,
+            classifier=nn.Identity(),
+        )
     else:
         raise ValueError(f"Model {model_name} not supported")
 

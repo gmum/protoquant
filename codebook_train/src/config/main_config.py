@@ -56,7 +56,7 @@ class MainConfig:
             {"codebook": "_"},
         ]
     )
-    seed: int = random.randint(0, 1e6)
+    seed: int = MISSING
 
     model: ModelConfig = field(default_factory=ModelConfig)
     base_optimizer: BaseOptimizerConfig = MISSING

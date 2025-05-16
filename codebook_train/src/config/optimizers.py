@@ -31,7 +31,7 @@ class SGDOptimizerConfig(BaseOptimizerConfig):
 
 
 config_store = ConfigStore.instance()
-for group in ("base_optimizer", "codebook_optimizer"):
+for group in ("base_optimizer", "codebook_optimizer", "probe_optimizer"):
     config_store.store(group=group, name="adam", node=AdamOptimizerConfig)
     config_store.store(group=group, name="adamw", node=AdamWOptimizerConfig)
     config_store.store(group=group, name="sgd", node=SGDOptimizerConfig)

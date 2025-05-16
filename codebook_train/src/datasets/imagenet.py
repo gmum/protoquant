@@ -72,18 +72,14 @@ def get_imagenet_transforms(
     val_transforms = []
 
     if resize_value is not None:
-        train_transforms.append(
-            transforms_v2.Resize(size=(resize_value, resize_value), antialias=True)
-        )
-        val_transforms.append(
-            transforms_v2.Resize(size=(resize_value, resize_value), antialias=True)
-        )
+        train_transforms.append(transforms_v2.Resize(size=resize_value, antialias=True))
+        val_transforms.append(transforms_v2.Resize(size=resize_value, antialias=True))
 
     if horizontal_flip is not None:
         train_transforms.append(transforms_v2.RandomHorizontalFlip(p=horizontal_flip))
 
     if crop_value is not None:
-        train_transforms.append(transforms_v2.RandomCrop(size=(crop_value, crop_value)))
+        train_transforms.append(transforms_v2.RandomCrop(size=crop_value))
         val_transforms.append(transforms_v2.CenterCrop(crop_value))
 
     train_transforms.append(transforms_v2.TrivialAugmentWide())

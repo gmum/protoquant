@@ -1,0 +1,220 @@
+import hydra
+import logging
+from omegaconf import OmegaConf
+from src.codebook_wrappers import create_codebook_wrapper
+from src.datasets.construct_dataset import get_dataloaders
+from src.construct_model import construct_model
+from src.utils import set_reproducibility, save_checkpoint
+import torch
+import torch.nn as nn
+from datetime import datetime
+from pathlib import Path
+from src.config.ssl_config import SelfSupervisedConfig
+from torchvision.transforms import v2 as transforms_v2
+from src.ssl_utils import evaluate_linear_probe, train_epoch_ssl
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
+    logger.info("wandb is not available, skipping wandb.init")
+
+
+@hydra.main(config_path="config", config_name="ssl_config", version_base="1.2")
+def start_training_ssl(cfg: SelfSupervisedConfig) -> None:
+    """Main function for training the codebook with self-supervised learning
+
+    Args:
+        cfg (SelfSupervisedConfig): Main configuration object
+    """
+    logger.setLevel(cfg._logging_level)
+
+    if cfg.wandb.is_enabled:
+        wandb_run = wandb.init(
+            project=cfg.wandb.project,
+            config=OmegaConf.to_container(cfg),
+            entity=cfg.wandb.entity,
+            group=cfg.wandb.group,
+            job_type=cfg.wandb.job_type,
+            tags=cfg.wandb.tags,
+        )
+    else:
+        wandb_run = None
+        logger.info("wandb is not enabled")
+
+    logger.info(OmegaConf.to_yaml(cfg))
+    hydra_output_dir = Path(
+        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+    )
+    logger.info(f"Hydra output directory: {hydra_output_dir}")
+    set_reproducibility(cfg.seed)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    train_ssl_training(cfg, device, wandb_run)
+
+
+def train_ssl_training(
+    cfg: SelfSupervisedConfig, device: torch.device, wandb_run=None
+) -> None:
+    """Trains the codebook with self-supervised learning
+
+    Args:
+        cfg (SelfSupervisedConfig): Main configuration object
+        device (torch.device): Device to use for training
+        wandb_run: wandb run object
+    """
+
+    model = construct_model(cfg).to(device)
+    logger.info(f"Model: {model}")
+
+    train_dataloader, val_dataloader = get_dataloaders(cfg)
+
+    linear_probe = nn.Linear(cfg.training.probe_dim, cfg.dataset.num_classes).to(device)
+    logger.info(f"Linear probe: {linear_probe}")
+
+    probe_optimizer = hydra.utils.instantiate(
+        cfg.probe_optimizer,
+        params=linear_probe.parameters(),
+    )
+    logger.info(f"Linear probe optimizer: {probe_optimizer}")
+
+    cutmix = transforms_v2.CutMix(num_classes=cfg.dataset.num_classes)
+    mixup = transforms_v2.MixUp(num_classes=cfg.dataset.num_classes)
+    cutmix_or_mixup = transforms_v2.RandomChoice([cutmix, mixup])
+    criterion = nn.CrossEntropyLoss(label_smoothing=cfg.training.label_smoothing)
+
+    logger.info("Validate the base model")
+
+    # freeze the model
+    for param in model.parameters():
+        param.requires_grad = False
+
+    linear_probe_acc = evaluate_linear_probe(
+        model=model,
+        train_dl=train_dataloader,
+        train_transforms=cutmix_or_mixup,
+        val_dl=val_dataloader,
+        linear_probe=linear_probe,
+        optimizer=probe_optimizer,
+        epochs=cfg.training.probe_epochs,
+        criterion=criterion,
+        apply_adaptive_pooling=True,
+        device=device,
+    )
+    logger.info(f"Base linear probe accuracy: {linear_probe_acc:.4f}")
+
+    # create and insert the codebook into the model, set the requires_grad
+    codebook = hydra.utils.instantiate(cfg.codebook).to(device)
+    if cfg.codebook_path:
+        codebook.load_state_dict(torch.load(cfg.codebook_path))
+
+    model_with_codebook = create_codebook_wrapper(
+        model=model,
+        codebook=codebook,
+        model_name=cfg.model.name,
+        unfreeze_before=0,
+    )
+    logger.info(f"Model with codebook: {model_with_codebook}")
+
+    codebook_optimizer = hydra.utils.instantiate(
+        cfg.codebook_optimizer,
+        params=codebook.parameters(),
+    )
+    logger.info(f"Codebook optimizer: {codebook_optimizer}")
+
+    train_codebook_ssl(
+        model=model_with_codebook,
+        epochs=cfg.epochs,
+        train_dataloader=train_dataloader,
+        train_transforms=cutmix_or_mixup,
+        val_dataloader=val_dataloader,
+        codebook_optimizer=codebook_optimizer,
+        probe_optimizer=probe_optimizer,
+        linear_probe=linear_probe,
+        probe_criterion=criterion,
+        probe_epochs=cfg.training.probe_epochs,
+        schedulers=[],
+        device=device,
+        wandb_run=wandb_run,
+    )
+
+    if cfg.output_checkpoint_path is not None:
+        hydra_path = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+        current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        out_path = hydra_path / f"{cfg.model.name}_{current_date}.pth"
+        logger.info(f"Saving model to {out_path}")
+        save_checkpoint(
+            model=model,
+            path=out_path,
+        )
+        save_checkpoint(
+            model=codebook,
+            path=hydra_path / f"{cfg.model.name}_codebook_{current_date}.pth",
+        )
+
+
+def train_codebook_ssl(
+    model: nn.Module,
+    epochs: int,
+    train_dataloader: torch.utils.data.DataLoader,
+    train_transforms: torch.nn.Module,
+    val_dataloader: torch.utils.data.DataLoader,
+    codebook_optimizer: torch.optim.Optimizer,
+    probe_optimizer: torch.optim.Optimizer,
+    linear_probe: nn.Module,
+    probe_criterion: nn.Module,
+    probe_epochs: int,
+    schedulers: list[torch.optim.lr_scheduler._LRScheduler],
+    device: torch.device,
+    wandb_run=None,
+):
+    for epoch in range(epochs):
+        logger.info(f"Epoch: {epoch}")
+        train_statistics = train_epoch_ssl(
+            model=model,
+            train_dataloader=train_dataloader,
+            transforms=train_transforms,
+            optimizers=[codebook_optimizer],
+            schedulers=schedulers,
+            device=device,
+        )
+
+        # add prefix Train and Validation to the statistics
+        train_statistics = {f"Train {k}": v for k, v in train_statistics.items()}
+
+        logger.info(f"Train statistics: {train_statistics}")
+        if wandb_run:
+            wandb.log(
+                {
+                    "Epoch": epoch,
+                    **train_statistics,
+                }
+            )
+
+    logger.info("Linear Probe Evaluation")
+    probe_acc = evaluate_linear_probe(
+        model=model,
+        train_dl=train_dataloader,
+        train_transforms=train_transforms,
+        val_dl=val_dataloader,
+        linear_probe=linear_probe,
+        optimizer=probe_optimizer,
+        epochs=probe_epochs,
+        criterion=probe_criterion,
+        apply_adaptive_pooling=True,
+        device=device,
+    )
+
+    logger.info(f"Linear Probe Accuracy: {probe_acc:.4f}%")
+    if wandb_run:
+        wandb.log(
+            {
+                "Epoch": epoch,
+                **train_statistics,
+                "Linear Probe Accuracy": probe_acc,
+            }
+        )
