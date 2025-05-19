@@ -18,6 +18,9 @@ from src.config.main_config import (
 
 @dataclass
 class SSLTrainingConfig:
+    enable_schedulers: bool = True
+    warmup_epochs: int = 10
+
     probe_epochs: int = MISSING  # number of epochs to train the linear probe
     probe_dim: int = (
         MISSING  # dimension of the linear probe, should be equal to the last layer of the model

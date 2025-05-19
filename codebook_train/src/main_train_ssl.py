@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from src.config.ssl_config import SelfSupervisedConfig
 from torchvision.transforms import v2 as transforms_v2
-from src.ssl_utils import evaluate_linear_probe, train_epoch_ssl
+from src.ssl_utils import evaluate_linear_probe, train_epoch_ssl, create_scheduler
 
 
 logging.basicConfig(level=logging.INFO)
@@ -87,6 +87,15 @@ def train_ssl_training(
     cutmix_or_mixup = transforms_v2.RandomChoice([cutmix, mixup])
     criterion = nn.CrossEntropyLoss(label_smoothing=cfg.training.label_smoothing)
 
+    epoch_iters = len(train_dataloader)
+    probe_scheduler = None
+    if cfg.training.enable_schedulers:
+        probe_scheduler = create_scheduler(
+            probe_optimizer,
+            epochs=cfg.training.probe_epochs,
+            epoch_iters=epoch_iters,
+            warmup_epochs=cfg.training.warmup_epochs,
+        )
     logger.info("Validate the base model")
 
     # freeze the model
@@ -100,6 +109,7 @@ def train_ssl_training(
         val_dl=val_dataloader,
         linear_probe=linear_probe,
         optimizer=probe_optimizer,
+        scheduler=probe_scheduler,
         epochs=cfg.training.probe_epochs,
         criterion=criterion,
         apply_adaptive_pooling=True,
@@ -126,6 +136,25 @@ def train_ssl_training(
     )
     logger.info(f"Codebook optimizer: {codebook_optimizer}")
 
+    codebook_scheduler = None
+    if cfg.training.enable_schedulers:
+        codebook_scheduler = create_scheduler(
+            codebook_optimizer,
+            epochs=cfg.epochs,
+            epoch_iters=epoch_iters,
+            warmup_epochs=cfg.training.warmup_epochs,
+        )
+    logger.info(f"Codebook scheduler: {codebook_scheduler}")
+
+    # Reset the scheduler for the probe optimizer
+    if cfg.training.enable_schedulers and probe_scheduler is not None:
+        probe_scheduler = create_scheduler(
+            probe_optimizer,
+            epochs=cfg.training.probe_epochs,
+            epoch_iters=epoch_iters,
+            warmup_epochs=cfg.training.warmup_epochs,
+        )
+
     train_codebook_ssl(
         model=model_with_codebook,
         epochs=cfg.epochs,
@@ -137,7 +166,8 @@ def train_ssl_training(
         linear_probe=linear_probe,
         probe_criterion=criterion,
         probe_epochs=cfg.training.probe_epochs,
-        schedulers=[],
+        codebook_scheduler=codebook_scheduler,
+        probe_scheduler=probe_scheduler,
         device=device,
         wandb_run=wandb_run,
     )
@@ -168,7 +198,8 @@ def train_codebook_ssl(
     linear_probe: nn.Module,
     probe_criterion: nn.Module,
     probe_epochs: int,
-    schedulers: list[torch.optim.lr_scheduler._LRScheduler],
+    codebook_scheduler: torch.optim.lr_scheduler._LRScheduler,
+    probe_scheduler: torch.optim.lr_scheduler._LRScheduler,
     device: torch.device,
     wandb_run=None,
 ):
@@ -179,7 +210,7 @@ def train_codebook_ssl(
             train_dataloader=train_dataloader,
             transforms=train_transforms,
             optimizers=[codebook_optimizer],
-            schedulers=schedulers,
+            schedulers=[codebook_scheduler] if codebook_scheduler else [],
             device=device,
         )
 
@@ -205,6 +236,7 @@ def train_codebook_ssl(
         optimizer=probe_optimizer,
         epochs=probe_epochs,
         criterion=probe_criterion,
+        scheduler=probe_scheduler,
         apply_adaptive_pooling=True,
         device=device,
     )
@@ -213,8 +245,6 @@ def train_codebook_ssl(
     if wandb_run:
         wandb.log(
             {
-                "Epoch": epoch,
-                **train_statistics,
                 "Linear Probe Accuracy": probe_acc,
             }
         )

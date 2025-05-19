@@ -18,10 +18,12 @@ def evaluate_linear_probe(
     val_dl: DataLoader,
     linear_probe: nn.Module,
     optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
     epochs: int,
     criterion: nn.Module,
     apply_adaptive_pooling: bool = True,
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    wandb_run=None,
 ) -> float:
     """
     Evaluates the linear probe model on the validation set.
@@ -33,10 +35,12 @@ def evaluate_linear_probe(
         val_dl (DataLoader): DataLoader for the validation set.
         linear_probe (nn.Module): The linear probe model.
         optimizer (torch.optim.Optimizer): Optimizer for the linear probe.
+        scheduler (torch.optim.lr_scheduler._LRScheduler): Scheduler for the optimizer.
         epochs (int): Number of epochs to train the linear probe.
         criterion (nn.Module): Loss function for training.
         apply_adaptive_pooling (bool): Whether to apply adaptive pooling to features.
         device (torch.device): Device to run the model on ('cuda' or 'cpu').
+        wandb_run: Wandb object for logging (optional).
 
     Returns:
         float: Validation accuracy.
@@ -45,7 +49,7 @@ def evaluate_linear_probe(
     model, linear_probe = model.to(device), linear_probe.to(device)
 
     for epoch in range(epochs):
-        logger.info(f"Epoch {epoch}/{epochs}")
+        logger.info(f"Linear Probe Training Epoch {epoch}/{epochs}")
         model.train()
         linear_probe.train()
 
@@ -66,6 +70,9 @@ def evaluate_linear_probe(
             loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
+
+            if scheduler is not None:
+                scheduler.step()
 
         # Evaluate on validation set
         model.eval()
@@ -90,6 +97,13 @@ def evaluate_linear_probe(
         logger.info(
             f"Epoch {epoch}/{epochs} Linear Probe Validation Accuracy: {mean_accuracy:.4f}%"
         )
+        if wandb_run:
+            wandb_run.log(
+                {
+                    "Probe Epoch": epoch,
+                    "Probe Validation Accuracy": mean_accuracy,
+                }
+            )
 
     return mean_accuracy
 
@@ -255,3 +269,56 @@ def train_epoch_ssl(
     model.codebook.reset_statistics()
 
     return codebook_statistics
+
+
+def create_scheduler(
+    optimizer: torch.optim.Optimizer,
+    epochs: int,
+    epoch_iters: int,
+    warmup_epochs: int,
+) -> torch.optim.lr_scheduler._LRScheduler:
+    """Create schedulers for the optimizers
+
+    Args:
+        optimizer (torch.optim.Optimizer): Optimizer to create schedulers for
+        epochs (int): Number of epochs
+        epoch_iters (int): Number of iterations per epoch
+        warmup_epochs (int): Number of warmup epochs
+
+    Returns:
+        torch.optim.lr_scheduler._LRScheduler: Scheduler for the optimizer
+    """
+
+    total_iterations = epoch_iters * epochs
+    logger.info(f"Total iterations: {total_iterations}")
+
+    linear_scheduler_iters = warmup_epochs * epoch_iters
+    linear_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        start_factor=0.1,
+        end_factor=1.0,
+        total_iters=linear_scheduler_iters,
+    )
+
+    cosine_cycles = 3
+    remaining_iterations = total_iterations - linear_scheduler_iters
+    initial_cycle_length = remaining_iterations // (2**cosine_cycles - 1)
+
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=initial_cycle_length,
+        T_mult=2,
+        eta_min=0.000001,
+    )
+    sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[linear_scheduler, cosine_scheduler],
+        milestones=[linear_scheduler_iters],
+    )
+
+    logger.info(f"Warmup iterations: {linear_scheduler_iters}")
+    logger.info(
+        f"Cosine iterations: {[initial_cycle_length * 2**i for i in range(1, cosine_cycles + 1)]}"
+    )
+
+    return sequential_scheduler
