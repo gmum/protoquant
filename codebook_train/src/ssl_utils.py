@@ -1,7 +1,6 @@
 from typing import Any
 import torch
 import torch.nn as nn
-import faiss
 from torch.utils.data import DataLoader
 from src.codebook_wrappers import CNNCodebookWrapper
 from src.utils import calculate_accuracy
@@ -156,57 +155,6 @@ def extract_features(
         model_encoder.train()
 
     return features_tensor, labels_tensor
-
-
-def evaluate_knn(
-    model_encoder: nn.Module,
-    train_dataloader_knn: torch.utils.data.DataLoader,
-    val_dataloader_knn: torch.utils.data.DataLoader,
-    k: int = 10,
-    device: str = "cuda",
-):
-    logger.info("Extracting training features...")
-    train_features, train_labels = extract_features(
-        model_encoder, train_dataloader_knn, device
-    )
-    train_features_np = train_features.cpu().numpy()
-    train_labels_np = train_labels.cpu().numpy()
-
-    logger.info("Extracting validation features...")
-    val_features, val_labels = extract_features(
-        model_encoder, val_dataloader_knn, device
-    )
-    val_features_np = val_features.cpu().numpy()
-    val_labels_np = val_labels.cpu().numpy()
-
-    d = train_features_np.shape[1]  # Dimension of features
-
-    logger.info("Building Faiss index...")
-    # Simple flat L2 index (exact search, good for moderate size or GPU)
-    index = faiss.IndexFlatL2(d)
-
-    gpu_resource = faiss.StandardGpuResources()
-    index = faiss.index_cpu_to_gpu(gpu_resource, 0, index)
-
-    index.add(train_features_np.astype(np.float32))  # Add gallery features to index
-    logger.info(f"Faiss index built with {index.ntotal} vectors.")
-
-    logger.info(f"Searching KNN (k={k}) with Faiss...")
-    # D: distances, I: indices of neighbors in the gallery
-    _, indices = index.search(val_features_np.astype(np.float32), k)
-    logger.info(indices)
-    predictions = []
-    for neighbors_indices in indices:
-        neighbor_actual_labels = train_labels_np[neighbors_indices]
-        # Simple majority vote
-        pred_label = np.bincount(neighbor_actual_labels).argmax()
-        predictions.append(pred_label)
-
-    predictions_np = np.array(predictions)
-    correct = (predictions_np == val_labels_np).sum()
-    accuracy = correct / len(val_labels_np)
-
-    return accuracy * 100
 
 
 def train_epoch_ssl(

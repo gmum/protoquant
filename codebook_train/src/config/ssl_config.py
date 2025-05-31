@@ -15,6 +15,9 @@ from src.config.main_config import (
     ModelConfig,
 )
 
+from src.config.codebook_init import (
+    BaseInitializationConfig,
+)
 
 @dataclass
 class SSLTrainingConfig:
@@ -38,6 +41,7 @@ class SelfSupervisedConfig:
             {"codebook": "_"},
             {"probe_optimizer": "_"},
             {"codebook_optimizer": "_"},
+            {"codebook_init": "_"},
         ]
     )
     seed: int = MISSING
@@ -51,6 +55,7 @@ class SelfSupervisedConfig:
 
     probe_optimizer: BaseOptimizerConfig = MISSING
     codebook_optimizer: BaseOptimizerConfig = MISSING
+    codebook_init: BaseInitializationConfig = MISSING
 
     codebook: BaseCodebookConfig = MISSING
     codebook_path: Optional[str] = None

@@ -6,6 +6,7 @@ from src.codebook_wrappers import create_codebook_wrapper
 from src.construct_model import construct_model
 from src.datasets.construct_dataset import get_dataloaders
 from src.utils import (
+    construct_init_function,
     create_schedulers,
     train_epoch_cosine_codebook,
     validate_epoch,
@@ -106,6 +107,15 @@ def prepare_codebook_training(
 
     # create and insert the codebook into the model, set the requires_grad
     codebook = hydra.utils.instantiate(cfg.codebook).to(device)
+    
+    # check if codebook constains initialize_embeddings method
+    if hasattr(codebook, "initialize_embeddings"):
+        logger.info("Initializing codebook embeddings")
+        init_function = construct_init_function(cfg.codebook_init)
+        logger.info(f"Using initialization function: {init_function}")
+        codebook.initialize_embeddings(init_func=init_function)
+    
+    
     if cfg.codebook_path:
         codebook.load_state_dict(torch.load(cfg.codebook_path))
 
@@ -161,10 +171,27 @@ def prepare_codebook_training(
             model=model,
             path=out_path,
         )
+        
+        codebook_path = hydra_path / f"{cfg.model.name}_codebook_{current_date}.pth"
         save_checkpoint(
             model=codebook,
-            path=hydra_path / f"{cfg.model.name}_codebook_{current_date}.pth",
+            path=codebook_path,
         )
+        
+        # save to wandb if available
+        if wandb_run:
+            wandb.save(
+                str(out_path),
+                base_path=hydra_path,
+                policy="now",
+            )
+            
+            # save checkpoint for codebook
+            wandb.save(
+                str(codebook_path),
+                base_path=hydra_path,
+                policy="now",
+            )
 
 
 @hydra.main(config_path="config", config_name="main_config", version_base="1.2")

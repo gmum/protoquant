@@ -5,6 +5,7 @@ from typing import Any, Optional
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 
+from src.config.codebook_init import BaseInitializationConfig
 from src.config.codebooks import BaseCodebookConfig
 from src.config.datasets import BaseDataset
 from src.config.optimizers import BaseOptimizerConfig
@@ -54,6 +55,7 @@ class MainConfig:
             {"codebook_optimizer": "_"},
             {"dataset": "_"},
             {"codebook": "_"},
+            {"codebook_init": "_"},
         ]
     )
     seed: int = MISSING
@@ -70,6 +72,7 @@ class MainConfig:
 
     codebook: BaseCodebookConfig = MISSING
     codebook_path: Optional[str] = None
+    codebook_init: BaseInitializationConfig = MISSING
     training: TrainingConfig = field(default_factory=TrainingConfig)
     _logging_level: int = 20
 

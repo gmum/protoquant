@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, Callable
 import torch
 import torch.nn as nn
 import random
@@ -7,6 +7,9 @@ import numpy as np
 from src.codebook_wrappers import CNNCodebookWrapper
 from src.config.main_config import MainConfig
 import hydra
+from src.config.codebook_init import BaseInitializationConfig
+from omegaconf import OmegaConf
+import functools
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -322,3 +325,26 @@ def calculate_accuracy(output: torch.Tensor, target: torch.Tensor) -> float:
         correct = pred.eq(target.view_as(pred)).sum().item()
         acc = correct / target.size(0)
         return acc * 100
+
+def construct_init_function(init_config: BaseInitializationConfig) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Constructs an initialization function based on the provided configuration.
+    
+    The returned function will take only one argument: the tensor to be initialized.
+    
+    Args:
+        init_config (BaseInitializationConfig): Configuration for the initialization.
+        
+    Returns:
+        Callable[[torch.Tensor], None]: The initialization function, ready to be called
+                                       with a single tensor argument.
+    """
+    
+    init_func = hydra.utils.get_method(init_config._target_)
+    
+    init_params = OmegaConf.to_container(init_config, resolve=True)
+    if '_target_' in init_params:
+        del init_params['_target_'] # Remove the target, as it's already extracted
+
+    initialized_fn = functools.partial(init_func, **init_params)
+    
+    return initialized_fn

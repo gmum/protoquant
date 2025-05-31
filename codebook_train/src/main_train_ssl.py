@@ -4,7 +4,7 @@ from omegaconf import OmegaConf
 from src.codebook_wrappers import create_codebook_wrapper
 from src.datasets.construct_dataset import get_dataloaders
 from src.construct_model import construct_model
-from src.utils import set_reproducibility, save_checkpoint
+from src.utils import set_reproducibility, save_checkpoint, construct_init_function
 import torch
 import torch.nn as nn
 from datetime import datetime
@@ -122,6 +122,14 @@ def train_ssl_training(
     if cfg.codebook_path:
         codebook.load_state_dict(torch.load(cfg.codebook_path))
 
+    # check if codebook constains initialize_embeddings method
+    if hasattr(codebook, "initialize_embeddings"):
+        logger.info("Initializing codebook embeddings")
+        init_function = construct_init_function(cfg.codebook_init)
+        logger.info(f"Using initialization function: {init_function}")
+        codebook.initialize_embeddings(init_func=init_function)
+    
+    
     model_with_codebook = create_codebook_wrapper(
         model=model,
         codebook=codebook,
@@ -175,16 +183,33 @@ def train_ssl_training(
     if cfg.output_checkpoint_path is not None:
         hydra_path = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
         current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        out_path = hydra_path / f"{cfg.model.name}_{current_date}.pth"
+        out_path = hydra_path / f"{cfg.model.name}_ssl_{current_date}.pth"
         logger.info(f"Saving model to {out_path}")
         save_checkpoint(
             model=model,
             path=out_path,
         )
+        
+        codebook_path = hydra_path / f"{cfg.model.name}_codebook_ssl_{current_date}.pth"
         save_checkpoint(
             model=codebook,
-            path=hydra_path / f"{cfg.model.name}_codebook_{current_date}.pth",
+            path=codebook_path,
         )
+        
+        # save to wandb if available
+        if wandb_run:
+            wandb.save(
+                str(out_path),
+                base_path=hydra_path,
+                policy="now",
+            )
+            
+            # save checkpoint for codebook
+            wandb.save(
+                str(codebook_path),
+                base_path=hydra_path,
+                policy="now",
+            )
 
 
 def train_codebook_ssl(

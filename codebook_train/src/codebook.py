@@ -1,3 +1,4 @@
+from typing import Callable
 import torch
 from torch import nn
 import logging
@@ -77,9 +78,6 @@ class CosineSimilarityCodebook(nn.Module):
         super().__init__()
         self.entropy_weight = entropy_loss_weight
         self.embeddings = nn.Embedding(num_entries, embedding_dim)
-        nn.init.orthogonal_(
-            self.embeddings.weight,
-        )
 
         mapping_layers = LinearGELUNorm.construct_layers(
             [embedding_dim] + mapping_dim_config
@@ -92,6 +90,17 @@ class CosineSimilarityCodebook(nn.Module):
         self.register_buffer(
             "restarted_count", torch.zeros(num_entries, dtype=torch.long)
         )
+        
+    def initialize_embeddings(self, init_func: Callable[[torch.Tensor], torch.Tensor]) -> None:
+        """Initialize the embeddings using the provided initialization function.
+        
+        Args:
+            init_func (Callable[[torch.Tensor], torch.Tensor]): Function to initialize the embeddings.
+        """
+        
+        with torch.no_grad():
+            init_func(self.embeddings.weight)
+        
 
     def calculate_entropy_loss(self, code_indices: torch.Tensor) -> torch.Tensor:
         """Calculate entropy loss to encourage uniform codebook usage.
