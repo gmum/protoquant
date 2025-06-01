@@ -28,7 +28,7 @@ class ImageNet1K(BaseDataset):
     num_classes: int = 1000
     resize_size: int = 256
     crop_size: int = 224
-    random_crop: Optional[float] = 0.1
+    random_erase: Optional[float] = 0.1
     horizontal_flip: Optional[float] = 0.5
 
 
