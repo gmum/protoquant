@@ -4,7 +4,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from src.codebook_wrappers import CNNCodebookWrapper
 from src.utils import calculate_accuracy
-import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)

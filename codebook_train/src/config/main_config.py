@@ -41,7 +41,8 @@ class TrainingConfig:
     label_smoothing: float = 0.1
     enable_schedulers: bool = True
     warmup_epochs: int = MISSING
-    restart_threshold: int = -1
+    use_amp: bool = False  # whether to use automatic mixed precision
+    compile_model: bool = True
 
     task_loss_weight: float = 1.0
     codebook_loss_weight: float = 1.0

@@ -21,7 +21,6 @@ class CosineSimilarityCodebookConfig(BaseCodebookConfig):
         f"{CosineSimilarityCodebook.__module__}.{CosineSimilarityCodebook.__qualname__}"
     )
     mapping_dim_config: list[int] = field(default_factory=list)
-    entropy_loss_weight: float = 0.0
 
 
 @dataclass
@@ -33,7 +32,6 @@ class DimReductionWrapperConfig(BaseCodebookConfig):
     in_block_config: list[int] = MISSING
     out_block_config: list[int] = MISSING
     mapping_dim_config: list[int] = field(default_factory=list)
-    entropy_loss_weight: float = 0.0
 
 
 @dataclass

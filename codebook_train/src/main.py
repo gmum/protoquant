@@ -43,9 +43,17 @@ def codebook_training(
     codebook_loss_weight: float,
     device: torch.device,
     epochs: int,
-    restart_threshold: int,
+    use_amp: bool,
     wandb_run=None,
 ):
+    # Initialize GradScaler with enabled parameter - handles AMP automatically
+    scaler = torch.amp.GradScaler(device=device.type, enabled=use_amp)
+
+    if scaler.is_enabled():
+        logger.info("Using Automated Mixed Precision (AMP) training")
+    else:
+        logger.info("Using standard precision training")
+
     for epoch in range(epochs):
         logger.info(f"Epoch: {epoch}")
         train_statistics = train_epoch_cosine_codebook(
@@ -58,7 +66,7 @@ def codebook_training(
             task_loss_weight=task_loss_weight,
             codebook_loss_weight=codebook_loss_weight,
             device=device,
-            restart_threshold=restart_threshold,
+            scaler=scaler,
             wandb_run=wandb_run,
         )
 
@@ -93,7 +101,13 @@ def prepare_codebook_training(
         wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
     """
 
+    logger.info(f"Device: {device}")
     model = construct_model(cfg).to(device)
+
+    if cfg.training.compile_model:
+        logger.info("Compiling the model for performance optimization")
+        torch.set_float32_matmul_precision("high")
+        model = torch.compile(model, mode="max-autotune", fullgraph=True)
 
     train_dataloader, val_dataloader = get_dataloaders(cfg)
     logger.info("Validate the base model")
@@ -107,15 +121,14 @@ def prepare_codebook_training(
 
     # create and insert the codebook into the model, set the requires_grad
     codebook = hydra.utils.instantiate(cfg.codebook).to(device)
-    
+
     # check if codebook constains initialize_embeddings method
     if hasattr(codebook, "initialize_embeddings"):
         logger.info("Initializing codebook embeddings")
         init_function = construct_init_function(cfg.codebook_init)
         logger.info(f"Using initialization function: {init_function}")
         codebook.initialize_embeddings(init_func=init_function)
-    
-    
+
     if cfg.codebook_path:
         codebook.load_state_dict(torch.load(cfg.codebook_path))
 
@@ -158,7 +171,7 @@ def prepare_codebook_training(
         codebook_loss_weight=cfg.training.codebook_loss_weight,
         device=device,
         epochs=cfg.epochs,
-        restart_threshold=cfg.training.restart_threshold,
+        use_amp=cfg.training.use_amp,
         wandb_run=wandb_run,
     )
 
@@ -171,13 +184,13 @@ def prepare_codebook_training(
             model=model,
             path=out_path,
         )
-        
+
         codebook_path = hydra_path / f"{cfg.model.name}_codebook_{current_date}.pth"
         save_checkpoint(
             model=codebook,
             path=codebook_path,
         )
-        
+
         # save to wandb if available
         if wandb_run:
             wandb.save(
@@ -185,7 +198,7 @@ def prepare_codebook_training(
                 base_path=hydra_path,
                 policy="now",
             )
-            
+
             # save checkpoint for codebook
             wandb.save(
                 str(codebook_path),

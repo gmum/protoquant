@@ -41,6 +41,7 @@ def get_dataloaders(
         pin_memory=cfg.train_dataloader.pin_memory,
         num_workers=cfg.train_dataloader.num_workers,
         drop_last=cfg.train_dataloader.drop_last,
+        persistent_workers=True,
     )
     validation_loader = DataLoader(
         validate_dataset,
@@ -49,6 +50,7 @@ def get_dataloaders(
         pin_memory=cfg.val_dataloader.pin_memory,
         num_workers=cfg.val_dataloader.num_workers,
         drop_last=cfg.val_dataloader.drop_last,
+        persistent_workers=True,
     )
 
     return train_loader, validation_loader

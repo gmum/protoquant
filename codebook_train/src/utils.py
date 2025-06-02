@@ -85,7 +85,7 @@ def train_epoch_cosine_codebook(
     task_loss_weight: float,
     codebook_loss_weight: float,
     device: torch.device,
-    restart_threshold: int,
+    scaler: torch.amp.GradScaler = None,
     wandb_run=None,
 ) -> dict[str, Any]:
     """Train a single epoch of the model with cosine codebook
@@ -100,7 +100,7 @@ def train_epoch_cosine_codebook(
         task_loss_weight (float): Weight for the task loss
         codebook_loss_weight (float): Weight for the codebook loss
         device (torch.device): Device to use for training
-        restart_threshold (int): Threshold for restarting the codebook.
+        scaler (torch.amp.GradScaler): GradScaler for mixed precision training
         wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
 
     Returns:
@@ -116,38 +116,44 @@ def train_epoch_cosine_codebook(
         for optimizer in optimizers:
             optimizer.zero_grad()
 
-        logits, codebook_loss = model(transformed_images)
-        task_loss = criterion(logits, transformed_labels)
+        # Forward pass with autocast - enabled parameter handles AMP automatically
+        with torch.amp.autocast(device_type=device.type, enabled=scaler.is_enabled()):
+            logits, codebook_loss = model(transformed_images)
+            task_loss = criterion(logits, transformed_labels)
+            total_loss = (
+                task_loss_weight * task_loss + codebook_loss_weight * codebook_loss
+            )
 
-        total_loss = task_loss_weight * task_loss + codebook_loss_weight * codebook_loss
+        # Backward pass with scaling - scaler handles whether to scale or not
+        scaler.scale(total_loss).backward()
 
-        # Backward pass
-        total_loss.backward()
-
+        # Unscale gradients and step optimizers
         for optimizer in optimizers:
-            optimizer.step()
+            scaler.step(optimizer)
+        scaler.update()
 
         # Step schedulers after each epoch
         for scheduler in schedulers:
             scheduler.step()
 
-        if (batch + 1) % (len(train_dataloader) // 10) == 0:
+        if (batch + 1) % (len(train_dataloader) // 5) == 0:
             accuracy = (logits.argmax(1) == labels).float().mean()
             log_dict = {
                 "Total Loss": total_loss.item(),
                 "Task Loss": task_loss.item(),
                 "Codebook Loss": codebook_loss.item(),
-                "Top1 Accuracy": accuracy.item(),
+                "Top1 Accuracy": accuracy.item() * 100,
             }
+
+            # Only log scaler scale if AMP is enabled
+            if scaler.is_enabled():
+                log_dict["Scaler Scale"] = scaler.get_scale()
 
             if wandb_run:
                 wandb_run.log(log_dict)
 
             logger.info(f"Batch: {batch + 1} / {len(train_dataloader)}")
             logger.info(log_dict)
-
-    if restart_threshold >= 0:
-        model.codebook.restart_codes(restart_threshold)
 
     codebook_statistics = model.codebook.get_statistics()
     model.codebook.reset_statistics()
