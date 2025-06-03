@@ -110,7 +110,9 @@ def train_epoch_cosine_codebook(
     model.train()
 
     for batch, (images, labels) in enumerate(train_dataloader):
-        images, labels = images.to(device), labels.to(device)
+        images, labels = images.to(device, non_blocking=True), labels.to(
+            device, non_blocking=True
+        )
         transformed_images, transformed_labels = transforms(images, labels)
 
         for optimizer in optimizers:
@@ -209,8 +211,8 @@ def set_reproducibility(seed: int) -> None:
     np.random.seed(seed)
     random.seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
 
 
 def save_checkpoint(path: str, model: nn.Module) -> None:

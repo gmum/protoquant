@@ -43,6 +43,9 @@ class TrainingConfig:
     warmup_epochs: int = MISSING
     use_amp: bool = False  # whether to use automatic mixed precision
     compile_model: bool = True
+    compile_mode: str = (
+        "default"  # options: "default", "reduce-overhead", "max-autotune"
+    )
 
     task_loss_weight: float = 1.0
     codebook_loss_weight: float = 1.0

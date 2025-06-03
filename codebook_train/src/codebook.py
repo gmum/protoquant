@@ -41,9 +41,11 @@ class VectorQuantizeCodebook(nn.Module):
         quantized, indices, loss = self.quantizer(x)
         quantized = quantized.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
 
-        self.code_usage += torch.bincount(
-            indices.view(-1), minlength=self.num_entries
-        ).long()
+        self.code_usage.scatter_add_(
+            0,
+            indices.view(-1),
+            torch.ones_like(indices.view(-1), dtype=torch.long),
+        )
 
         return quantized, loss
 
@@ -132,9 +134,11 @@ class CosineSimilarityCodebook(nn.Module):
             similarity = self.calculate_similarity(x, mapped_codes)
             code_indices = torch.argmax(similarity, dim=-1)
 
-            # sum over batch dim
-            count = torch.bincount(code_indices.view(-1), minlength=self.num_entries)
-            self.code_usage += count.long()
+            self.code_usage.scatter_add_(
+                0,
+                code_indices.view(-1),
+                torch.ones_like(code_indices.view(-1), dtype=torch.long),
+            )
 
         quantized = self.codebook_mapping(self.embeddings(code_indices))
         commitment_loss = torch.functional.F.mse_loss(quantized, x.detach())

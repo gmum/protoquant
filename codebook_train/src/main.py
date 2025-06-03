@@ -104,11 +104,6 @@ def prepare_codebook_training(
     logger.info(f"Device: {device}")
     model = construct_model(cfg).to(device)
 
-    if cfg.training.compile_model:
-        logger.info("Compiling the model for performance optimization")
-        torch.set_float32_matmul_precision("high")
-        model = torch.compile(model, mode="max-autotune", fullgraph=True)
-
     train_dataloader, val_dataloader = get_dataloaders(cfg)
     logger.info("Validate the base model")
     base_top1_acc, base_top5_acc = validate_epoch(
@@ -139,6 +134,11 @@ def prepare_codebook_training(
         unfreeze_before=cfg.training.unfreeze_before,
     )
     logger.info(f"Model with codebook: {model_with_codebook}")
+
+    if cfg.training.compile_model:
+        logger.info("Compiling the model for performance optimization")
+        torch.set_float32_matmul_precision("high")
+        model_with_codebook.compile(mode=cfg.training.compile_mode)
 
     optimizers = create_optimizers(
         model=model_with_codebook,
