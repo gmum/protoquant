@@ -15,17 +15,10 @@ from datetime import datetime
 import logging
 import hydra
 from src.config.pruning_config import PruningConfig
-
+import wandb
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-try:
-    import wandb
-except ImportError:
-    wandb = None
-    logger.info("wandb is not available, skipping wandb.init")
 
 
 @hydra.main(config_path="config", config_name="pruning_config", version_base="1.2")

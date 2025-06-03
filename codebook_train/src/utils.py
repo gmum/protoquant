@@ -11,7 +11,6 @@ from src.config.codebook_init import BaseInitializationConfig
 from omegaconf import OmegaConf
 import functools
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -211,8 +210,8 @@ def set_reproducibility(seed: int) -> None:
     np.random.seed(seed)
     random.seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def save_checkpoint(path: str, model: nn.Module) -> None:

@@ -5,11 +5,12 @@ from typing import Any, Optional
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 
+from src.config.distributed import DistributedConfig
 from src.config.codebook_init import BaseInitializationConfig
 from src.config.codebooks import BaseCodebookConfig
 from src.config.datasets import BaseDataset
 from src.config.optimizers import BaseOptimizerConfig
-
+from logging import INFO
 
 @dataclass
 class Dataloaders:
@@ -78,10 +79,12 @@ class MainConfig:
     codebook_path: Optional[str] = None
     codebook_init: BaseInitializationConfig = MISSING
     training: TrainingConfig = field(default_factory=TrainingConfig)
-    _logging_level: int = 20
+    _logging_level: int = INFO
 
     wandb: WandbConfig = field(default_factory=WandbConfig)
     output_checkpoint_path: Optional[str] = ""
+
+    distributed: DistributedConfig = field(default_factory=DistributedConfig)
 
 
 # register the config groups

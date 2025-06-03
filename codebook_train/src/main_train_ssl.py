@@ -12,16 +12,10 @@ from pathlib import Path
 from src.config.ssl_config import SelfSupervisedConfig
 from torchvision.transforms import v2 as transforms_v2
 from src.ssl_utils import evaluate_linear_probe, train_epoch_ssl, create_scheduler
-
+import wandb
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-try:
-    import wandb
-except ImportError:
-    wandb = None
-    logger.info("wandb is not available, skipping wandb.init")
 
 
 @hydra.main(config_path="config", config_name="ssl_config", version_base="1.2")
