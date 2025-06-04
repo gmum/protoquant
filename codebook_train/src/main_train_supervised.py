@@ -117,17 +117,14 @@ def prepare_codebook_training(
 
     codebook_training(
         model=model_with_codebook,
+        cfg=cfg,
         train_dataloader=train_dataloader,
         train_transforms=cutmix_or_mixup,
         val_dataloader=val_dataloader,
         optimizers=optimizers,
         schedulers=schedulers,
         criterion=criterion,
-        task_loss_weight=cfg.training.task_loss_weight,
-        codebook_loss_weight=cfg.training.codebook_loss_weight,
         device=device,
-        epochs=cfg.epochs,
-        use_amp=cfg.training.use_amp,
         wandb_run=wandb_run,
     )
 
@@ -164,45 +161,43 @@ def prepare_codebook_training(
 
 def codebook_training(
     model: nn.Module,
+    cfg: MainConfig,
     train_dataloader: torch.utils.data.DataLoader,
     train_transforms: torch.nn.Module,
     val_dataloader: torch.utils.data.DataLoader,
     optimizers: list[torch.optim.Optimizer],
     schedulers: list[torch.optim.lr_scheduler._LRScheduler],
     criterion: nn.Module,
-    task_loss_weight: float,
-    codebook_loss_weight: float,
     device: torch.device,
-    epochs: int,
-    use_amp: bool,
     wandb_run=None,
 ):
     # Initialize GradScaler with enabled parameter - handles AMP automatically
-    scaler = torch.amp.GradScaler(device=device.type, enabled=use_amp)
+    scaler = torch.amp.GradScaler(device=device.type, enabled=cfg.training.use_amp)
 
     if scaler.is_enabled():
         logger.info("Using Automated Mixed Precision (AMP) training")
     else:
         logger.info("Using standard precision training")
 
-    for epoch in range(epochs):
+    for epoch in range(cfg.epochs):
         logger.info(f"Epoch: {epoch}")
         train_statistics = train_epoch_cosine_codebook(
             model=model,
             train_dataloader=train_dataloader,
+            num_classes=cfg.dataset.num_classes,
             transforms=train_transforms,
             optimizers=optimizers,
             schedulers=schedulers,
             criterion=criterion,
-            task_loss_weight=task_loss_weight,
-            codebook_loss_weight=codebook_loss_weight,
+            task_loss_weight=cfg.training.task_loss_weight,
+            codebook_loss_weight=cfg.training.codebook_loss_weight,
             device=device,
             scaler=scaler,
             wandb_run=wandb_run,
         )
 
         val_statistics = validate_epoch_cosine_codebook(
-            model=model, val_dataloader=val_dataloader, device=device
+            model=model, val_dataloader=val_dataloader, device=device, num_classes=cfg.dataset.num_classes,
         )
 
         # add prefix Train and Validation to the statistics

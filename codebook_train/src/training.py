@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 def train_epoch_cosine_codebook(
     model: nn.parallel.DistributedDataParallel,
     train_dataloader: torch.utils.data.DataLoader,
+    num_classes: int,
     transforms: torch.nn.Module,
     optimizers: list[torch.optim.Optimizer],
     schedulers: list[torch.optim.lr_scheduler._LRScheduler],
@@ -44,7 +45,7 @@ def train_epoch_cosine_codebook(
     model.train()
     log_interval = len(train_dataloader) // 5
 
-    accuracy_metric = Accuracy(task="multiclass", num_classes=200).to(device)
+    accuracy_metric = Accuracy(task="multiclass", num_classes=num_classes).to(device)
 
     for batch, (images, labels) in enumerate(train_dataloader):
         images, labels = images.to(device), labels.to(device)
@@ -107,6 +108,7 @@ def train_epoch_cosine_codebook(
 def validate_epoch_cosine_codebook(
     model: nn.parallel.DistributedDataParallel,
     val_dataloader: torch.utils.data.DataLoader,
+    num_classes: int,
     device: torch.device,
 ) -> dict[str, Any]:
     """Validate the model for a single epoch"""
@@ -114,8 +116,8 @@ def validate_epoch_cosine_codebook(
     model.eval()
 
     # Initialize torchmetrics for validation
-    top1_accuracy = Accuracy(task="multiclass", num_classes=200, top_k=1).to(device)
-    top5_accuracy = Accuracy(task="multiclass", num_classes=200, top_k=5).to(device)
+    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1).to(device)
+    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=5).to(device)
 
     with torch.no_grad():
         for inputs, labels in val_dataloader:
