@@ -73,6 +73,15 @@ def create_codebook_wrapper(
             codebook=codebook,
             classifier=nn.Identity(),
         )
+    elif model_name == "head_only":
+        codebook_wrapper = CNNCodebookWrapper(
+            features=nn.Identity(),
+            codebook=codebook,
+            classifier=nn.Sequential(
+                nn.AdaptiveAvgPool2d(1),
+                model.classifier,
+            ),
+        )
     else:
         raise ValueError(f"Model {model_name} not supported")
 

@@ -10,8 +10,12 @@ from src.utils import (
     validate_epoch,
     save_checkpoint,
     create_optimizers,
+    create_feature_dataloader,
 )
-from src.training import train_epoch_cosine_codebook, validate_epoch_cosine_codebook
+from src.training import (
+    train_epoch_cosine_codebook,
+    validate_epoch_cosine_codebook,
+)
 from datetime import datetime
 import logging
 import hydra
@@ -50,7 +54,7 @@ def prepare_codebook_training(
         cfg, train_ds, val_ds, train_sampler=train_sampler, val_sampler=val_sampler
     )
 
-    if local_rank == 0:
+    if local_rank == 99:
         logger.info("Validate the base model")
         base_top1_acc, base_top5_acc = validate_epoch(
             model=model, val_dataloader=val_dataloader, device=device
@@ -91,11 +95,6 @@ def prepare_codebook_training(
         broadcast_buffers=True,
     )
 
-    if cfg.training.compile_model:
-        logger.info("Compiling the model for performance optimization")
-        torch.set_float32_matmul_precision("high")
-        model_with_codebook.compile(mode=cfg.training.compile_mode)
-
     optimizers = create_optimizers(
         model=model_with_codebook,
         codebook=codebook,
@@ -115,8 +114,40 @@ def prepare_codebook_training(
     cutmix_or_mixup = transforms_v2.RandomChoice([cutmix, mixup])
     criterion = nn.CrossEntropyLoss(label_smoothing=cfg.training.label_smoothing)
 
+    if cfg.training.only_features:
+        logger.info("Extracting features from the training dataset")
+
+        train_dataloader, val_dataloader = create_feature_dataloader(
+            model=model.features,
+            train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader,
+            device=device,
+            transforms=cutmix_or_mixup,
+            local_rank=local_rank,
+            cfg=cfg,
+        )
+
+        model_to_train = nn.parallel.DistributedDataParallel(
+            create_codebook_wrapper(
+                model=model,
+                codebook=codebook,
+                model_name="head_only",
+                unfreeze_before=0,
+            ),
+            device_ids=[device.index],
+            output_device=device.index,
+            broadcast_buffers=True,
+        )
+    else:
+        model_to_train = model_with_codebook
+
+    if cfg.training.compile_model:
+        logger.info("Compiling the model for performance optimization")
+        torch.set_float32_matmul_precision("high")
+        model_with_codebook.compile(mode=cfg.training.compile_mode)
+
     codebook_training(
-        model=model_with_codebook,
+        model=model_to_train,
         cfg=cfg,
         train_dataloader=train_dataloader,
         train_transforms=cutmix_or_mixup,

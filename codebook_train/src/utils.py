@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import random
 import numpy as np
+from src.distributed_utils import create_samplers
+from src.training import extract_features_from_backbone
 from src.codebook_wrappers import CNNCodebookWrapper
 from src.config.main_config import MainConfig
 import hydra
@@ -345,13 +347,84 @@ def construct_init_function(init_config: BaseInitializationConfig) -> Callable[[
         Callable[[torch.Tensor], None]: The initialization function, ready to be called
                                        with a single tensor argument.
     """
-    
+
     init_func = hydra.utils.get_method(init_config._target_)
-    
+
     init_params = OmegaConf.to_container(init_config, resolve=True)
     if '_target_' in init_params:
         del init_params['_target_'] # Remove the target, as it's already extracted
 
     initialized_fn = functools.partial(init_func, **init_params)
-    
+
     return initialized_fn
+
+
+def create_feature_dataloader(
+    model: nn.Module,
+    train_dataloader: torch.utils.data.DataLoader,
+    val_dataloader: torch.utils.data.DataLoader,
+    device: torch.device,
+    transforms: torch.nn.Module,
+    local_rank: int,
+    cfg: MainConfig,
+) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+    """Create a DataLoader for feature extraction.
+
+    Args:
+        model (nn.Module): The model to extract features from.
+        train_dataloader (torch.utils.data.DataLoader): DataLoader for training data.
+        val_dataloader (torch.utils.data.DataLoader): DataLoader for validation data.
+        device (torch.device): Device to run the model on ('cuda' or 'cpu').
+        transforms (torch.nn.Module): Transforms to apply to the input data.
+        local_rank (int): The rank of the current process in distributed training.
+        cfg (MainConfig): Main configuration object.
+
+    Returns:
+        tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]: A tuple containing feature DataLoaders for training and validation.
+    """
+    # extract features into the dataset
+
+    train_features, train_labels = extract_features_from_backbone(
+        feature_backbone=model,
+        dataloader=train_dataloader,
+        device=device,
+        transforms=transforms,
+    )
+    val_features, val_labels = extract_features_from_backbone(
+        feature_backbone=model,
+        dataloader=val_dataloader,
+        device=device,
+        transforms=None,
+    )
+    train_features_ds = torch.utils.data.TensorDataset(train_features, train_labels)
+    val_features_ds = torch.utils.data.TensorDataset(val_features, val_labels)
+
+    train_sampler, val_sampler = create_samplers(
+        train_dataset=train_features_ds,
+        val_dataset=val_features_ds,
+        rank=local_rank,
+        world_size=cfg.distributed.world_size,
+        seed=cfg.seed,
+    )
+
+    train_dl = torch.utils.data.DataLoader(
+        train_features_ds,
+        batch_size=cfg.train_dataloader.batch_size,
+        shuffle=False,
+        sampler=train_sampler,
+        num_workers=cfg.train_dataloader.num_workers,
+        pin_memory=cfg.train_dataloader.pin_memory,
+        persistent_workers=True,
+    )
+
+    val_dl = torch.utils.data.DataLoader(
+        val_features_ds,
+        batch_size=cfg.val_dataloader.batch_size,
+        shuffle=False,
+        sampler=val_sampler,
+        num_workers=cfg.val_dataloader.num_workers,
+        pin_memory=cfg.val_dataloader.pin_memory,
+        persistent_workers=True,
+    )
+
+    return train_dl, val_dl

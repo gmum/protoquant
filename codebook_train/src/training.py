@@ -3,14 +3,20 @@ import logging
 from typing import Any
 import torch
 import torch.nn as nn
+from src.codebook_wrappers import CNNCodebookWrapper
 from src.codebook import CosineSimilarityCodebook
 from torchmetrics import Accuracy
+from torch.utils.data import TensorDataset, DataLoader
 
 logger = logging.getLogger(__name__)
 
 
 def train_epoch_cosine_codebook(
-    model: nn.parallel.DistributedDataParallel,
+    model: (
+        nn.parallel.DistributedDataParallel
+        | CNNCodebookWrapper
+        | CosineSimilarityCodebook
+    ),
     train_dataloader: torch.utils.data.DataLoader,
     num_classes: int,
     transforms: torch.nn.Module,
@@ -98,7 +104,11 @@ def train_epoch_cosine_codebook(
             logger.info(f"Batch: {batch + 1} / {len(train_dataloader)}")
             logger.info(log_dict)
 
-    codebook: CosineSimilarityCodebook = model.module.codebook
+    if isinstance(model, nn.parallel.DistributedDataParallel):
+        codebook: CosineSimilarityCodebook = model.module.codebook
+    elif isinstance(model, CNNCodebookWrapper):
+        codebook: CosineSimilarityCodebook = model.codebook
+
     codebook_statistics = codebook.get_statistics()
     codebook.reset_statistics()
 
@@ -148,3 +158,59 @@ def validate_epoch_cosine_codebook(
     )
 
     return codebook_statistics
+
+
+def extract_features_from_backbone(
+    feature_backbone: nn.Module | nn.parallel.DistributedDataParallel,
+    dataloader: torch.utils.data.DataLoader,
+    device: torch.device,
+    transforms: torch.nn.Module = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Extract features from a model using the provided dataloader
+
+    Args:
+        feature_backbone (nn.Module): The backbone model to extract features from
+        dataloader (DataLoader): DataLoader containing the data
+        device (torch.device): Device to run extraction on
+        transforms (torch.nn.Module): Transforms to apply (only for training data)
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: Features and labels tensors with preserved dimensions
+    """
+
+    feature_backbone.eval()
+    log_interval = len(dataloader) // 5
+    all_features = []
+    all_labels = []
+
+    logger.info("Starting feature extraction")
+
+    with torch.no_grad():
+        for batch, (images, labels) in enumerate(dataloader):
+            images, labels = images.to(device), labels.to(device)
+
+            if transforms is not None:
+                transformed_images, _ = transforms(images, labels)
+            else:
+                transformed_images, _ = images, labels
+
+            features = feature_backbone(transformed_images)
+            all_features.append(features.cpu())
+            all_labels.append(labels.cpu())
+
+            should_log = (batch + 1) % log_interval == 0
+            if should_log:
+                logger.info(f"Batch: {batch + 1} / {len(dataloader)}")
+
+    logger.info(
+        f"Extracted {len(all_features)} batches with feature shape {list(all_features[0].shape)}"
+    )
+    # Concatenate all batches - preserving feature dimensions
+    features_tensor = torch.cat(all_features, dim=0)
+    labels_tensor = torch.cat(all_labels, dim=0)
+
+    logger.info(
+        f"Extracted {len(features_tensor)} samples with feature shape {list(features_tensor.shape)}"
+    )
+
+    return features_tensor, labels_tensor

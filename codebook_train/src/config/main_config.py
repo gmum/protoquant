@@ -51,6 +51,10 @@ class TrainingConfig:
     task_loss_weight: float = 1.0
     codebook_loss_weight: float = 1.0
 
+    only_features: bool = (
+        False  # whether cache model features and use them to train the codebook
+    )
+
 @dataclass
 class MainConfig:
     defaults: list[Any] = field(
