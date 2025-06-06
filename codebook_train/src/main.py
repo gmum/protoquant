@@ -54,12 +54,16 @@ def distributed_worker(rank: int, cfg: MainConfig, hydra_output_dir: Path) -> No
     setup_hydra_logging_for_rank(rank, cfg._logging_level, hydra_output_dir)
 
     if rank == 0 and cfg.wandb.is_enabled:
-        wandb_run = wandb.init()
+        wandb_run = wandb.init(
+            project=cfg.wandb.project,
+            config=OmegaConf.to_container(cfg),
+            entity=cfg.wandb.entity,
+            group=cfg.wandb.group,
+            job_type=cfg.wandb.job_type,
+            tags=cfg.wandb.tags,
+        )
     else:
         wandb_run = None
-
-    if wandb_run:
-        wandb_run.log(OmegaConf.to_yaml(cfg))
 
     # Initialize DDP
     dist.init_process_group(

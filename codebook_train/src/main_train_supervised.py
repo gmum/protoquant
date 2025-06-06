@@ -54,15 +54,14 @@ def prepare_codebook_training(
         cfg, train_ds, val_ds, train_sampler=train_sampler, val_sampler=val_sampler
     )
 
-    if local_rank == 99:
-        logger.info("Validate the base model")
-        base_top1_acc, base_top5_acc = validate_epoch(
-            model=model, val_dataloader=val_dataloader, device=device
-        )
+    logger.info("Validate the base model")
+    base_top1_acc, base_top5_acc = validate_epoch(
+        model=model, val_dataloader=val_dataloader, device=device
+    )
 
-        logger.info(
-            f"Base Validation top1-accuracy {base_top1_acc}, top5-accuracy {base_top5_acc}"
-        )
+    logger.info(
+        f"Base Validation top1-accuracy {base_top1_acc}, top5-accuracy {base_top5_acc}"
+    )
 
     # create and insert the codebook into the model, set the requires_grad
     codebook = hydra.utils.instantiate(cfg.codebook).to(device)
@@ -168,7 +167,7 @@ def prepare_codebook_training(
             path=out_path,
         )
 
-        codebook_path = hydra_path / f"{cfg.model.name}_codebook_{current_date}.pth"
+        codebook_path = hydra_path / f"{cfg.model.name}_codebook_{cfg.codebook.num_entries}_{current_date}.pth"
         save_checkpoint(
             model=codebook,
             path=codebook_path,

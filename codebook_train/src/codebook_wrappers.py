@@ -32,7 +32,7 @@ class CNNCodebookWrapper(nn.Module):
 
 def create_codebook_wrapper(
     model: nn.Module, codebook: nn.Module, model_name: str, unfreeze_before: int
-) -> nn.Module:
+) -> CNNCodebookWrapper:
     """Insert the codebook into the model and sets the gradient requirements
 
     Args:
@@ -45,7 +45,7 @@ def create_codebook_wrapper(
         ValueError: If the model name is not supported.
 
     Returns:
-        nn.Module: A wrapper module with the codebook inserted.
+        CNNCodebookWrapper: A wrapper module with the codebook inserted.
     """
 
     # Set requires_grad to False for all parameters

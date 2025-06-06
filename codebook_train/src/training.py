@@ -179,7 +179,7 @@ def extract_features_from_backbone(
     """
 
     feature_backbone.eval()
-    log_interval = len(dataloader) // 5
+    log_interval = len(dataloader) // 10
     all_features = []
     all_labels = []
 
@@ -198,7 +198,7 @@ def extract_features_from_backbone(
             all_features.append(features.cpu())
             all_labels.append(labels.cpu())
 
-            should_log = (batch + 1) % log_interval == 0
+            should_log = ((batch + 1) % log_interval == 0) or (batch == len(dataloader) - 1) 
             if should_log:
                 logger.info(f"Batch: {batch + 1} / {len(dataloader)}")
 
@@ -211,6 +211,11 @@ def extract_features_from_backbone(
 
     logger.info(
         f"Extracted {len(features_tensor)} samples with feature shape {list(features_tensor.shape)}"
+    )
+    
+    # print memory size of features and labels tensors
+    logger.info(
+        f"Features tensor size: {features_tensor.element_size() * features_tensor.nelement() / (1024 ** 2):.2f} MB"
     )
 
     return features_tensor, labels_tensor
