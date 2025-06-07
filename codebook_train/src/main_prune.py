@@ -2,9 +2,9 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
-from src.codebook import create_codebook_wrapper, ConvNextCosineWrapper
+from src.codebook_wrappers import create_codebook_wrapper, CNNCodebookWrapper
 from src.construct_model import construct_model
-from src.datasets.construct_dataset import get_dataloaders
+from src.datasets.construct_dataset import get_dataloaders, get_dataset
 from src.utils import (
     validate_epoch,
     set_reproducibility,
@@ -69,9 +69,13 @@ def prepare_codebook_pruning(
         wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
     """
 
-    model = construct_model(cfg).to(device)
+    model = construct_model(cfg, device)
 
-    _, val_dataloader = get_dataloaders(cfg)
+
+    train_ds, val_ds = get_dataset(cfg)
+    _, val_dataloader = get_dataloaders(
+        cfg, train_ds, val_ds, train_sampler=None, val_sampler=None
+    )
     logger.info("Validate the base model")
     base_top1_acc, base_top5_acc = validate_epoch(
         model=model, val_dataloader=val_dataloader, device=device
@@ -89,7 +93,7 @@ def prepare_codebook_pruning(
         model=model,
         codebook=codebook,
         model_name=cfg.model.name,
-        unfreeze_before=cfg.training.unfreeze_before,
+        unfreeze_before=0,
     )
     logger.info(f"Model with codebook: {model_with_codebook}")
 
@@ -119,7 +123,7 @@ def prepare_codebook_pruning(
 
 
 def codebook_pruning(
-    model: ConvNextCosineWrapper,
+    model: CNNCodebookWrapper,
     val_dataloader: torch.utils.data.DataLoader,
     num_codes: int,
     target_num_codes: int,
