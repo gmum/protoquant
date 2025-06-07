@@ -1,4 +1,6 @@
+from datetime import datetime
 import logging
+from pathlib import Path
 from typing import Any, Callable
 import torch
 import torch.nn as nn
@@ -216,17 +218,6 @@ def set_reproducibility(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def save_checkpoint(path: str, model: nn.Module) -> None:
-    """Save the model state to a checkpoint file
-
-    Args:
-        path (str): The path to save the checkpoint file
-        model (nn.Module): The model to save
-    """
-
-    torch.save(model.state_dict(), path)
-
-
 def create_optimizers(
     model: nn.Module, codebook: nn.Module, cfg: MainConfig
 ) -> list[torch.optim.Optimizer]:
@@ -428,3 +419,105 @@ def create_feature_dataloader(
     )
 
     return train_dl, val_dl
+
+
+class CheckpointTracker:
+    """Tracks the best validation accuracy and saves checkpoints accordingly"""
+
+    def __init__(self, initial_best: float = 0.0):
+        self.best_val_accuracy = initial_best
+
+    def is_best(self, val_accuracy: float) -> bool:
+        """Check if the current validation accuracy is the best so far
+
+        Args:
+            val_accuracy (float): The validation accuracy to check
+
+        Returns:
+            bool: True if this is the best validation accuracy, False otherwise
+        """
+
+        if val_accuracy > self.best_val_accuracy:
+            self.best_val_accuracy = val_accuracy
+            return True
+
+        return False
+
+
+def save_checkpoint(
+    model: nn.parallel.DistributedDataParallel | nn.Module | CNNCodebookWrapper,
+    val_accuracy: float,
+    epoch: int,
+    cfg: MainConfig,
+    hydra_path: Path,
+    wandb_run=None,
+) -> bool:
+    """Save model and codebook checkpoint
+
+    Args:
+        model (nn.Module): The model to save (can be DDP wrapped)
+        val_accuracy (float): The validation accuracy achieved
+        epoch (int): The epoch number
+        cfg (MainConfig): Configuration object
+        hydra_path (Path): Path to save checkpoints
+        wandb_run: WandB run object for uploading checkpoints
+
+    Returns:
+        bool: True if checkpoint was saved successfully
+    """
+
+    base_model = model
+    if isinstance(model, nn.parallel.DistributedDataParallel):
+        base_model = model.module
+
+    if hasattr(base_model, "codebook"):
+        codebook = base_model.codebook
+    else:
+        raise ValueError("Model does not have a codebook attribute")
+
+    current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Save model
+    model_path = (
+        hydra_path
+        / f"{cfg.model.name}_val_{val_accuracy:.2f}_epoch_{epoch}_{current_date}.pth"
+    )
+    logger.info(
+        f"Saving model (val_acc={val_accuracy:.2f}% at epoch {epoch}) to {model_path}"
+    )
+    torch.save(base_model.state_dict(), model_path)
+
+    # Save codebook
+    codebook_path = (
+        hydra_path
+        / f"{cfg.model.name}_codebook_{cfg.codebook.num_entries}_val_{val_accuracy:.2f}_epoch_{epoch}_{current_date}.pth"
+    )
+    logger.info(f"Saving codebook to {codebook_path}")
+    torch.save(codebook.state_dict(), codebook_path)
+
+    # Save to wandb if available
+    if wandb_run:
+        wandb_run.save(
+            str(model_path),
+            base_path=hydra_path,
+            policy="now",
+        )
+
+        wandb_run.save(
+            str(codebook_path),
+            base_path=hydra_path,
+            policy="now",
+        )
+
+        # Log checkpoint info
+        wandb_run.log(
+            {
+                "Checkpoint_Val_Accuracy": val_accuracy,
+                "Checkpoint_Epoch": epoch,
+            }
+        )
+
+    logger.info(
+        f"Checkpoint saved. Validation accuracy: {val_accuracy:.2f}% at epoch {epoch}"
+    )
+    return True

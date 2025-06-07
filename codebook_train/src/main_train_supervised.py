@@ -5,6 +5,7 @@ from src.codebook_wrappers import create_codebook_wrapper
 from src.construct_model import construct_model
 from src.datasets.construct_dataset import get_dataloaders, get_dataset
 from src.utils import (
+    CheckpointTracker,
     construct_init_function,
     create_schedulers,
     validate_epoch,
@@ -16,7 +17,6 @@ from src.training import (
     train_epoch_cosine_codebook,
     validate_epoch_cosine_codebook,
 )
-from datetime import datetime
 import logging
 import hydra
 from src.config.main_config import MainConfig
@@ -156,37 +156,9 @@ def prepare_codebook_training(
         criterion=criterion,
         device=device,
         wandb_run=wandb_run,
+        local_rank=local_rank,
+        hydra_path=hydra_path,
     )
-
-    if local_rank == 0 and cfg.output_checkpoint_path is not None:
-        current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        out_path = hydra_path / f"{cfg.model.name}_{current_date}.pth"
-        logger.info(f"Saving model to {out_path}")
-        save_checkpoint(
-            model=model,
-            path=out_path,
-        )
-
-        codebook_path = hydra_path / f"{cfg.model.name}_codebook_{cfg.codebook.num_entries}_{current_date}.pth"
-        save_checkpoint(
-            model=codebook,
-            path=codebook_path,
-        )
-
-        # save to wandb if available
-        if wandb_run:
-            wandb_run.save(
-                str(out_path),
-                base_path=hydra_path,
-                policy="now",
-            )
-
-            # save checkpoint for codebook
-            wandb_run.save(
-                str(codebook_path),
-                base_path=hydra_path,
-                policy="now",
-            )
 
 
 def codebook_training(
@@ -199,10 +171,13 @@ def codebook_training(
     schedulers: list[torch.optim.lr_scheduler._LRScheduler],
     criterion: nn.Module,
     device: torch.device,
+    local_rank: int,
+    hydra_path: Path,
     wandb_run=None,
 ):
     # Initialize GradScaler with enabled parameter - handles AMP automatically
     scaler = torch.amp.GradScaler(device=device.type, enabled=cfg.training.use_amp)
+    checkpoint_tracker = CheckpointTracker()
 
     if scaler.is_enabled():
         logger.info("Using Automated Mixed Precision (AMP) training")
@@ -236,11 +211,14 @@ def codebook_training(
 
         logger.info(f"Train statistics: {train_statistics}")
         logger.info(f"Validation statistics: {val_statistics}")
-        if wandb_run:
-            wandb_run.log(
-                {
-                    "Epoch": epoch,
-                    **val_statistics,
-                    **train_statistics,
-                }
+
+        accuracy = val_statistics["Validation Top1 Accuracy"]
+        if local_rank == 0 and checkpoint_tracker.is_best(accuracy):
+            save_checkpoint(
+                model=model,
+                val_accuracy=accuracy,
+                epoch=epoch,
+                cfg=cfg,
+                hydra_path=hydra_path,
+                wandb_run=wandb_run,
             )

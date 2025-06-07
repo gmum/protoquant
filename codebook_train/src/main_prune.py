@@ -102,18 +102,20 @@ def prepare_codebook_pruning(
         steps=cfg.steps,
     )
 
-    if cfg.output_checkpoint_path is not None:
-        hydra_path = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
-        current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        out_codebook_path = (
-            hydra_path
-            / f"pruned_{cfg.target_num_codes}_{cfg.model.name}_codebook_{current_date}.pth"
-        )
-        save_checkpoint(
-            model=codebook,
-            path=out_codebook_path,
-        )
-        logger.info(f"Saved pruned codebook to {out_codebook_path}")
+    hydra_path = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+    current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    out_codebook_path = (
+        hydra_path
+        / f"pruned_{cfg.target_num_codes}_{cfg.model.name}_codebook_{current_date}.pth"
+    )
+    save_checkpoint(
+        model=codebook,
+        path=out_codebook_path,
+    )
+    logger.info(f"Saved pruned codebook to {out_codebook_path}")
+
+    if wandb_run:
+        wandb.save(str(out_codebook_path), base_path=hydra_path, policy="now")
 
 
 def codebook_pruning(

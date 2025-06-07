@@ -86,8 +86,6 @@ class MainConfig:
     _logging_level: int = INFO
 
     wandb: WandbConfig = field(default_factory=WandbConfig)
-    output_checkpoint_path: Optional[str] = ""
-
     distributed: DistributedConfig = field(default_factory=DistributedConfig)
 
 
