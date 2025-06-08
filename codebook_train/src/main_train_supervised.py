@@ -211,6 +211,10 @@ def codebook_training(
 
         logger.info(f"Train statistics: {train_statistics}")
         logger.info(f"Validation statistics: {val_statistics}")
+        
+        if wandb_run:
+            wandb_run.log(train_statistics, step=epoch)
+            wandb_run.log(val_statistics, step=epoch)
 
         accuracy = val_statistics["Validation Top1 Accuracy"]
         if local_rank == 0 and checkpoint_tracker.is_best(accuracy):
