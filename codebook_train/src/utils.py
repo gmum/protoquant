@@ -1,4 +1,3 @@
-from datetime import datetime
 import logging
 from pathlib import Path
 from typing import Any, Callable
@@ -448,7 +447,7 @@ def save_checkpoint(
     model: nn.parallel.DistributedDataParallel | nn.Module | CNNCodebookWrapper,
     val_accuracy: float,
     epoch: int,
-    cfg: MainConfig,
+    name: str,
     hydra_path: Path,
     wandb_run=None,
 ) -> bool:
@@ -457,7 +456,6 @@ def save_checkpoint(
     Args:
         model (nn.Module): The model to save (can be DDP wrapped)
         val_accuracy (float): The validation accuracy achieved
-        epoch (int): The epoch number
         cfg (MainConfig): Configuration object
         hydra_path (Path): Path to save checkpoints
         wandb_run: WandB run object for uploading checkpoints
@@ -475,12 +473,10 @@ def save_checkpoint(
     else:
         raise ValueError("Model does not have a codebook attribute")
 
-    current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
     # Save model
     model_path = (
         hydra_path
-        / f"{cfg.model.name}_val_{val_accuracy:.2f}_epoch_{epoch}_{current_date}.pth"
+        / f"model_{name}.pth"
     )
     logger.info(
         f"Saving model (val_acc={val_accuracy:.2f}% at epoch {epoch}) to {model_path}"
@@ -490,7 +486,7 @@ def save_checkpoint(
     # Save codebook
     codebook_path = (
         hydra_path
-        / f"{cfg.model.name}_codebook_{cfg.codebook.num_entries}_val_{val_accuracy:.2f}_epoch_{epoch}_{current_date}.pth"
+        / f"codebook_{name}.pth"
     )
     logger.info(f"Saving codebook to {codebook_path}")
     torch.save(codebook.state_dict(), codebook_path)

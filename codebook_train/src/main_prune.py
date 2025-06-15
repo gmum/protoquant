@@ -112,9 +112,8 @@ def prepare_codebook_pruning(
         hydra_path
         / f"pruned_{cfg.target_num_codes}_{cfg.model.name}_codebook_{current_date}.pth"
     )
-    save_checkpoint(
-        model=codebook,
-        path=out_codebook_path,
+    torch.save(
+        model_with_codebook.codebook.state_dict(), out_codebook_path
     )
     logger.info(f"Saved pruned codebook to {out_codebook_path}")
 

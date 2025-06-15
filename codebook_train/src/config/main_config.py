@@ -43,7 +43,7 @@ class TrainingConfig:
     enable_schedulers: bool = True
     warmup_epochs: int = MISSING
     use_amp: bool = False  # whether to use automatic mixed precision
-    compile_model: bool = True
+    compile_model: bool = False
     compile_mode: str = (
         "default"  # options: "default", "reduce-overhead", "max-autotune"
     )

@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 import torch
 import torch.nn as nn
@@ -178,7 +179,9 @@ def codebook_training(
     # Initialize GradScaler with enabled parameter - handles AMP automatically
     scaler = torch.amp.GradScaler(device=device.type, enabled=cfg.training.use_amp)
     checkpoint_tracker = CheckpointTracker()
-
+    current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    checkpoint_name = f"{cfg.model.name}_{cfg.codebook.num_entries}_{current_date}.pth"
+    
     if scaler.is_enabled():
         logger.info("Using Automated Mixed Precision (AMP) training")
     else:
@@ -213,8 +216,9 @@ def codebook_training(
         logger.info(f"Validation statistics: {val_statistics}")
         
         if wandb_run:
-            wandb_run.log(train_statistics, step=epoch)
-            wandb_run.log(val_statistics, step=epoch)
+            wandb_run.log({"epoch": epoch})
+            wandb_run.log(train_statistics)
+            wandb_run.log(val_statistics)
 
         accuracy = val_statistics["Validation Top1 Accuracy"]
         if local_rank == 0 and checkpoint_tracker.is_best(accuracy):
@@ -222,7 +226,9 @@ def codebook_training(
                 model=model,
                 val_accuracy=accuracy,
                 epoch=epoch,
-                cfg=cfg,
+                name=checkpoint_name,
                 hydra_path=hydra_path,
                 wandb_run=wandb_run,
             )
+    
+    logger.info(f"Best accuracy {checkpoint_tracker.best_val_accuracy}% at epoch {checkpoint_tracker.best_val_accuracy}")
