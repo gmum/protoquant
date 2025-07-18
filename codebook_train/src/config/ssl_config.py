@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-import random
 from typing import Any, Optional
 
 from hydra.core.config_store import ConfigStore
@@ -7,7 +6,7 @@ from omegaconf import MISSING
 
 from src.config.optimizers import BaseOptimizerConfig
 from src.config.codebooks import BaseCodebookConfig
-from src.config.datasets import BaseDataset
+from src.config.datasets import BaseDatasetConfig
 
 from src.config.main_config import (
     Dataloaders,
@@ -19,15 +18,14 @@ from src.config.codebook_init import (
     BaseInitializationConfig,
 )
 
+
 @dataclass
 class SSLTrainingConfig:
     enable_schedulers: bool = True
     warmup_epochs: int = 10
 
     probe_epochs: int = MISSING  # number of epochs to train the linear probe
-    probe_dim: int = (
-        MISSING  # dimension of the linear probe, should be equal to the last layer of the model
-    )
+    probe_dim: int = MISSING  # dimension of the linear probe, should be equal to the last layer of the model
 
     label_smoothing: float = 0.1
 
@@ -49,7 +47,7 @@ class SelfSupervisedConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     epochs: int = MISSING
 
-    dataset: BaseDataset = MISSING
+    dataset: BaseDatasetConfig = MISSING
     train_dataloader: Dataloaders = field(default_factory=Dataloaders)
     val_dataloader: Dataloaders = field(default_factory=Dataloaders)
 

@@ -69,7 +69,6 @@ class VectorQuantizeCodebook(nn.Module):
 
 
 class CosineSimilarityCodebook(nn.Module):
-
     def __init__(
         self,
         num_entries: int,
@@ -88,9 +87,11 @@ class CosineSimilarityCodebook(nn.Module):
         self.num_entries = num_entries
         self.register_buffer("code_usage", torch.zeros(num_entries, dtype=torch.long))
 
-    def initialize_embeddings(self, init_func: Callable[[torch.Tensor], torch.Tensor]) -> None:
+    def initialize_embeddings(
+        self, init_func: Callable[[torch.Tensor], torch.Tensor]
+    ) -> None:
         """Initialize the embeddings using the provided initialization function.
-        
+
         Args:
             init_func (Callable[[torch.Tensor], torch.Tensor]): Function to initialize the embeddings.
         """
@@ -146,11 +147,11 @@ class CosineSimilarityCodebook(nn.Module):
 
         return quantized, commitment_loss
 
-    def get_statistics(self) -> dict[str, torch.Tensor]:
+    def get_statistics(self) -> dict[str, torch.Tensor | float]:
         """Return statistics about the codebook usage.
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary with the statistics.
+            dict[str, torch.Tensor | float]: Dictionary with the statistics.
         """
         return {
             "code_usage": self.code_usage.clone(),
@@ -163,8 +164,8 @@ class CosineSimilarityCodebook(nn.Module):
     def reset_statistics(self):
         self.code_usage.zero_()
 
-class DimReductionWrapper(nn.Module):
 
+class DimReductionWrapper(nn.Module):
     def __init__(
         self,
         input_dim: int,
@@ -188,9 +189,9 @@ class DimReductionWrapper(nn.Module):
         self.out_block = nn.Sequential(*out_block)
 
         last_dim = in_block_config[-1] if in_block_config else embedding_dim
-        assert (
-            last_dim == input_dim
-        ), f"Last dimension doesn't match the input dimension: {last_dim} != {input_dim}"
+        assert last_dim == input_dim, (
+            f"Last dimension doesn't match the input dimension: {last_dim} != {input_dim}"
+        )
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Quantize the vectors using the Cosine codebook, but with dimensionality reduction.

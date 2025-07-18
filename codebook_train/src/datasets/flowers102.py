@@ -1,15 +1,16 @@
-from torchvision.datasets import ImageNet
+# import dataloaders
+from torchvision.datasets import Flowers102
 from src.datasets.construct_dataset import get_default_image_transforms
 
 
-def get_imagenet1k(
+def get_flowers102(
     path: str,
     resize_value: int | None = None,
     crop_value: int | None = None,
     random_erase: float | None = None,
     horizontal_flip: float | None = None,
-) -> tuple[ImageNet, ImageNet]:
-    """Constructs the ImageNet1K dataset.
+) -> tuple[Flowers102, Flowers102]:
+    """Constructs the Flowers102 dataset.
 
     Args:
         path (str): Path to the dataset.
@@ -19,9 +20,8 @@ def get_imagenet1k(
         horizontal_flip (float | None): The probability of applying horizontal flip. Defaults to None.
 
     Returns:
-        tuple[Dataset, Dataset]: Train and validation datasets.
+        tuple[Flowers102, Flowers102]: Train and validation datasets.
     """
-
     train_transform, test_transform = get_default_image_transforms(
         resize_value=resize_value,
         crop_value=crop_value,
@@ -29,16 +29,15 @@ def get_imagenet1k(
         horizontal_flip=horizontal_flip,
     )
 
-    train_dataset = ImageNet(
-        root=path,
-        split="train",
-        transform=train_transform,
+    train_dataset = Flowers102(
+        root=path, split="train", transform=train_transform, download=True
     )
 
-    validate_dataset = ImageNet(
+    validate_dataset = Flowers102(
         root=path,
-        split="val",
+        split="val",  # Flowers102 has a 'val' split
         transform=test_transform,
+        download=True,
     )
 
     return train_dataset, validate_dataset

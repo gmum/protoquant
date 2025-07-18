@@ -19,7 +19,7 @@ def profile_training():
         ],
         record_shapes=False,
         profile_memory=False,
-        with_stack=False,
+        with_stack=True,
     ) as prof:
         start_training()
 

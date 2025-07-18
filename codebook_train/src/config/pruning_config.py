@@ -6,7 +6,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 
 from src.config.codebooks import BaseCodebookConfig
-from src.config.datasets import BaseDataset
+from src.config.datasets import BaseDatasetConfig
 
 from src.config.main_config import (
     Dataloaders,
@@ -25,14 +25,14 @@ class PruningConfig:
             {"codebook": "_"},
         ]
     )
-    seed: int = random.randint(0, 1e6)
+    seed: int = random.randint(0, 10**6)
 
     model: ModelConfig = field(default_factory=ModelConfig)
 
     target_num_codes: int = MISSING
     steps: int = MISSING
 
-    dataset: BaseDataset = MISSING
+    dataset: BaseDatasetConfig = MISSING
     train_dataloader: Dataloaders = field(default_factory=Dataloaders)
     val_dataloader: Dataloaders = field(default_factory=Dataloaders)
 

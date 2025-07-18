@@ -1,4 +1,4 @@
-from torchvision.datasets import ImageNet, CIFAR10, CIFAR100
+from torchvision.datasets import ImageNet, CIFAR10, CIFAR100, Flowers102, StanfordCars
 from torchvision.datasets.imagenet import ARCHIVE_META
 import sys
 import argparse
@@ -102,6 +102,30 @@ def main(args):
             )
         elif args.dataset == "cub200":
             CUB200(target_dir_path, source_dir_path).load_to_memfs()
+        elif args.dataset == "flowers102":
+            logger.info("downloading flowers102")
+            Flowers102(
+                root=target_dir_path,
+                split="train",
+                download=True,
+            )
+            Flowers102(
+                root=target_dir_path,
+                split="val",
+                download=True,
+            )
+        elif args.dataset == "stanfordcars":
+            logger.info("downloading stanfordcars")
+            StanfordCars(
+                root=target_dir_path,
+                split="train",
+                download=True,
+            )
+            StanfordCars(
+                root=target_dir_path,
+                split="val",
+                download=True,
+            )
         else:
             logger.error(
                 f"Unsupported dataset: {args.dataset}. Supported datasets are: imagenet1k, cifar10, cifar100, cub200."

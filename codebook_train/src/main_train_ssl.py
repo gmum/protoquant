@@ -62,7 +62,7 @@ def train_ssl_training(
         wandb_run: wandb run object
     """
 
-    model = construct_model(cfg).to(device)
+    model = construct_model(cfg, device=device)
     logger.info(f"Model: {model}")
 
     train_dataloader, val_dataloader = get_dataloaders(cfg)
@@ -122,8 +122,7 @@ def train_ssl_training(
         init_function = construct_init_function(cfg.codebook_init)
         logger.info(f"Using initialization function: {init_function}")
         codebook.initialize_embeddings(init_func=init_function)
-    
-    
+
     model_with_codebook = create_codebook_wrapper(
         model=model,
         codebook=codebook,
@@ -183,13 +182,13 @@ def train_ssl_training(
             model=model,
             path=out_path,
         )
-        
+
         codebook_path = hydra_path / f"{cfg.model.name}_codebook_ssl_{current_date}.pth"
         save_checkpoint(
             model=codebook,
             path=codebook_path,
         )
-        
+
         # save to wandb if available
         if wandb_run:
             wandb.save(
@@ -197,7 +196,7 @@ def train_ssl_training(
                 base_path=hydra_path,
                 policy="now",
             )
-            
+
             # save checkpoint for codebook
             wandb.save(
                 str(codebook_path),

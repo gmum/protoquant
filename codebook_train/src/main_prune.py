@@ -8,7 +8,6 @@ from src.datasets.construct_dataset import get_dataloaders, get_dataset
 from src.utils import (
     validate_epoch,
     set_reproducibility,
-    save_checkpoint,
     validate_epoch_cosine_codebook,
 )
 from datetime import datetime
@@ -71,7 +70,6 @@ def prepare_codebook_pruning(
 
     model = construct_model(cfg, device)
 
-
     train_ds, val_ds = get_dataset(cfg)
     _, val_dataloader = get_dataloaders(
         cfg, train_ds, val_ds, train_sampler=None, val_sampler=None
@@ -112,9 +110,7 @@ def prepare_codebook_pruning(
         hydra_path
         / f"pruned_{cfg.target_num_codes}_{cfg.model.name}_codebook_{current_date}.pth"
     )
-    torch.save(
-        model_with_codebook.codebook.state_dict(), out_codebook_path
-    )
+    torch.save(model_with_codebook.codebook.state_dict(), out_codebook_path)
     logger.info(f"Saved pruned codebook to {out_codebook_path}")
 
     if wandb_run:

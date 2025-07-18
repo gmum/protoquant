@@ -8,6 +8,7 @@ from src.codebook import (
     VectorQuantizeCodebook,
 )
 
+
 @dataclass
 class BaseCodebookConfig:
     _target_: str = MISSING

@@ -177,11 +177,11 @@ def codebook_training(
     wandb_run=None,
 ):
     # Initialize GradScaler with enabled parameter - handles AMP automatically
-    scaler = torch.amp.GradScaler(device=device.type, enabled=cfg.training.use_amp)
+    scaler = torch.amp.GradScaler(device=device.type, enabled=cfg.training.use_amp) # type: ignore
     checkpoint_tracker = CheckpointTracker()
     current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     checkpoint_name = f"{cfg.model.name}_{cfg.codebook.num_entries}_{current_date}.pth"
-    
+
     if scaler.is_enabled():
         logger.info("Using Automated Mixed Precision (AMP) training")
     else:
@@ -205,7 +205,10 @@ def codebook_training(
         )
 
         val_statistics = validate_epoch_cosine_codebook(
-            model=model, val_dataloader=val_dataloader, device=device, num_classes=cfg.dataset.num_classes,
+            model=model,
+            val_dataloader=val_dataloader,
+            device=device,
+            num_classes=cfg.dataset.num_classes,
         )
 
         # add prefix Train and Validation to the statistics
@@ -214,7 +217,7 @@ def codebook_training(
 
         logger.info(f"Train statistics: {train_statistics}")
         logger.info(f"Validation statistics: {val_statistics}")
-        
+
         if wandb_run:
             wandb_run.log({"epoch": epoch})
             wandb_run.log(train_statistics)
@@ -230,5 +233,7 @@ def codebook_training(
                 hydra_path=hydra_path,
                 wandb_run=wandb_run,
             )
-    
-    logger.info(f"Best accuracy {checkpoint_tracker.best_val_accuracy}% at epoch {checkpoint_tracker.best_val_accuracy}")
+
+    logger.info(
+        f"Best accuracy {checkpoint_tracker.best_val_accuracy}% at epoch {checkpoint_tracker.best_val_accuracy}"
+    )

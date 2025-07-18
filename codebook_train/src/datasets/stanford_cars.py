@@ -1,15 +1,17 @@
-from torchvision.datasets import ImageNet
+# import dataloaders
+from torchvision.datasets import StanfordCars
+from torch.utils.data import Dataset
 from src.datasets.construct_dataset import get_default_image_transforms
 
 
-def get_imagenet1k(
+def get_stanford_cars(
     path: str,
     resize_value: int | None = None,
     crop_value: int | None = None,
     random_erase: float | None = None,
     horizontal_flip: float | None = None,
-) -> tuple[ImageNet, ImageNet]:
-    """Constructs the ImageNet1K dataset.
+) -> tuple[StanfordCars, StanfordCars]:
+    """Constructs the Stanford Cars dataset.
 
     Args:
         path (str): Path to the dataset.
@@ -19,9 +21,8 @@ def get_imagenet1k(
         horizontal_flip (float | None): The probability of applying horizontal flip. Defaults to None.
 
     Returns:
-        tuple[Dataset, Dataset]: Train and validation datasets.
+        tuple[StanfordCars, StanfordCars]: Train and validation datasets.
     """
-
     train_transform, test_transform = get_default_image_transforms(
         resize_value=resize_value,
         crop_value=crop_value,
@@ -29,16 +30,15 @@ def get_imagenet1k(
         horizontal_flip=horizontal_flip,
     )
 
-    train_dataset = ImageNet(
-        root=path,
-        split="train",
-        transform=train_transform,
+    train_dataset = StanfordCars(
+        root=path, split="train", transform=train_transform, download=True
     )
 
-    validate_dataset = ImageNet(
+    validate_dataset = StanfordCars(
         root=path,
-        split="val",
+        split="test",  # Stanford Cars uses 'test' for the validation split
         transform=test_transform,
+        download=True,
     )
 
     return train_dataset, validate_dataset

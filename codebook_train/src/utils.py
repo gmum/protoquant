@@ -112,8 +112,9 @@ def train_epoch_cosine_codebook(
     model.train()
 
     for batch, (images, labels) in enumerate(train_dataloader):
-        images, labels = images.to(device, non_blocking=True), labels.to(
-            device, non_blocking=True
+        images, labels = (
+            images.to(device, non_blocking=True),
+            labels.to(device, non_blocking=True),
         )
         transformed_images, transformed_labels = transforms(images, labels)
 
@@ -325,14 +326,17 @@ def calculate_accuracy(output: torch.Tensor, target: torch.Tensor) -> float:
         acc = correct / target.size(0)
         return acc * 100
 
-def construct_init_function(init_config: BaseInitializationConfig) -> Callable[[torch.Tensor], torch.Tensor]:
+
+def construct_init_function(
+    init_config: BaseInitializationConfig,
+) -> Callable[[torch.Tensor], torch.Tensor]:
     """Constructs an initialization function based on the provided configuration.
-    
+
     The returned function will take only one argument: the tensor to be initialized.
-    
+
     Args:
         init_config (BaseInitializationConfig): Configuration for the initialization.
-        
+
     Returns:
         Callable[[torch.Tensor], None]: The initialization function, ready to be called
                                        with a single tensor argument.
@@ -341,8 +345,8 @@ def construct_init_function(init_config: BaseInitializationConfig) -> Callable[[
     init_func = hydra.utils.get_method(init_config._target_)
 
     init_params = OmegaConf.to_container(init_config, resolve=True)
-    if '_target_' in init_params:
-        del init_params['_target_'] # Remove the target, as it's already extracted
+    if "_target_" in init_params:
+        del init_params["_target_"]  # Remove the target, as it's already extracted
 
     initialized_fn = functools.partial(init_func, **init_params)
 
@@ -474,20 +478,14 @@ def save_checkpoint(
         raise ValueError("Model does not have a codebook attribute")
 
     # Save model
-    model_path = (
-        hydra_path
-        / f"model_{name}.pth"
-    )
+    model_path = hydra_path / f"model_{name}.pth"
     logger.info(
         f"Saving model (val_acc={val_accuracy:.2f}% at epoch {epoch}) to {model_path}"
     )
     torch.save(base_model.state_dict(), model_path)
 
     # Save codebook
-    codebook_path = (
-        hydra_path
-        / f"codebook_{name}.pth"
-    )
+    codebook_path = hydra_path / f"codebook_{name}.pth"
     logger.info(f"Saving codebook to {codebook_path}")
     torch.save(codebook.state_dict(), codebook_path)
 

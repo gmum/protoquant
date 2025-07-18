@@ -1,4 +1,3 @@
-import torch.distributed as dist
 import logging
 from typing import Any
 import torch
@@ -6,17 +5,12 @@ import torch.nn as nn
 from src.codebook_wrappers import CNNCodebookWrapper
 from src.codebook import CosineSimilarityCodebook
 from torchmetrics import Accuracy
-from torch.utils.data import TensorDataset, DataLoader
 
 logger = logging.getLogger(__name__)
 
 
 def train_epoch_cosine_codebook(
-    model: (
-        nn.parallel.DistributedDataParallel
-        | CNNCodebookWrapper
-        | CosineSimilarityCodebook
-    ),
+    model: nn.Module,
     train_dataloader: torch.utils.data.DataLoader,
     num_classes: int,
     transforms: torch.nn.Module,
@@ -26,14 +20,14 @@ def train_epoch_cosine_codebook(
     task_loss_weight: float,
     codebook_loss_weight: float,
     device: torch.device,
-    scaler: torch.amp.GradScaler = None,
+    scaler: torch.amp.GradScaler,
     wandb_run=None,
-) -> dict[str, Any]:
+) -> dict[str, torch.Tensor | float]:
     """Train a single epoch of the model with cosine codebook
-
     Args:
-        model (nn.parallel.DistributedDataParallel): DDP wrapped model with codebook
+        model (nn.Module): Model with a codebook
         train_dataloader (torch.utils.data.DataLoader): DataLoader for training data
+        num_classes (int): Number of classes in the dataset
         transforms (torch.nn.Module): Transformations to apply to the input data
         optimizers (list[torch.optim.Optimizer]): List of optimizers to use
         schedulers (list[torch.optim.lr_scheduler._LRScheduler]): List of schedulers to use
@@ -45,7 +39,7 @@ def train_epoch_cosine_codebook(
         wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
 
     Returns:
-        dict[str, float]: Statistics of the codebook after training
+        dict[str, torch.Tensor | float]: Dictionary with training statistics
     """
 
     model.train()
@@ -108,6 +102,8 @@ def train_epoch_cosine_codebook(
         codebook: CosineSimilarityCodebook = model.module.codebook
     elif isinstance(model, CNNCodebookWrapper):
         codebook: CosineSimilarityCodebook = model.codebook
+    else:
+        codebook: CosineSimilarityCodebook = model
 
     codebook_statistics = codebook.get_statistics()
     codebook.reset_statistics()
@@ -116,7 +112,7 @@ def train_epoch_cosine_codebook(
 
 
 def validate_epoch_cosine_codebook(
-    model: nn.parallel.DistributedDataParallel,
+    model: nn.Module,
     val_dataloader: torch.utils.data.DataLoader,
     num_classes: int,
     device: torch.device,
@@ -126,13 +122,18 @@ def validate_epoch_cosine_codebook(
     model.eval()
 
     # Initialize torchmetrics for validation
-    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1).to(device)
-    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=5).to(device)
+    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1).to(
+        device
+    )
+    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=5).to(
+        device
+    )
 
     with torch.no_grad():
         for inputs, labels in val_dataloader:
-            inputs, labels = inputs.to(device, non_blocking=True), labels.to(
-                device, non_blocking=True
+            inputs, labels = (
+                inputs.to(device, non_blocking=True),
+                labels.to(device, non_blocking=True),
             )
 
             logits, _ = model(inputs)
@@ -198,7 +199,9 @@ def extract_features_from_backbone(
             all_features.append(features.cpu())
             all_labels.append(labels.cpu())
 
-            should_log = ((batch + 1) % log_interval == 0) or (batch == len(dataloader) - 1) 
+            should_log = ((batch + 1) % log_interval == 0) or (
+                batch == len(dataloader) - 1
+            )
             if should_log:
                 logger.info(f"Batch: {batch + 1} / {len(dataloader)}")
 
@@ -212,10 +215,10 @@ def extract_features_from_backbone(
     logger.info(
         f"Extracted {len(features_tensor)} samples with feature shape {list(features_tensor.shape)}"
     )
-    
+
     # print memory size of features and labels tensors
     logger.info(
-        f"Features tensor size: {features_tensor.element_size() * features_tensor.nelement() / (1024 ** 2):.2f} MB"
+        f"Features tensor size: {features_tensor.element_size() * features_tensor.nelement() / (1024**2):.2f} MB"
     )
 
     return features_tensor, labels_tensor

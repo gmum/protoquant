@@ -3,7 +3,7 @@ import pandas as pd
 from torchvision.datasets import VisionDataset
 import torchvision.io as io
 from torch.utils.data import Dataset
-from src.datasets.imagenet import get_imagenet_transforms
+from src.datasets.construct_dataset import get_default_image_transforms
 
 
 class CUB200(VisionDataset):
@@ -67,7 +67,7 @@ def get_cub200(
     crop_value: int | None = None,
     random_erase: float | None = None,
     horizontal_flip: float | None = None,
-) -> tuple[Dataset, Dataset]:
+) -> tuple[CUB200, CUB200]:
     """Constructs the CUB200-2011 dataset.
 
     Args:
@@ -78,10 +78,10 @@ def get_cub200(
         horizontal_flip (float | None): The probability of applying horizontal flip. Defaults to None.
 
     Returns:
-        tuple[Dataset, Dataset]: Train and validation datasets.
+        tuple[CUB200, CUB200]: Train and validation datasets.
     """
 
-    train_transform, test_transform = get_imagenet_transforms(
+    train_transform, test_transform = get_default_image_transforms(
         resize_value=resize_value,
         crop_value=crop_value,
         random_erase=random_erase,

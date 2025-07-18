@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-import random
 from typing import Any, Optional
 
 from hydra.core.config_store import ConfigStore
@@ -8,9 +7,10 @@ from omegaconf import MISSING
 from src.config.distributed import DistributedConfig
 from src.config.codebook_init import BaseInitializationConfig
 from src.config.codebooks import BaseCodebookConfig
-from src.config.datasets import BaseDataset
+from src.config.datasets import BaseDatasetConfig
 from src.config.optimizers import BaseOptimizerConfig
 from logging import INFO
+
 
 @dataclass
 class Dataloaders:
@@ -55,6 +55,7 @@ class TrainingConfig:
         False  # whether cache model features and use them to train the codebook
     )
 
+
 @dataclass
 class MainConfig:
     defaults: list[Any] = field(
@@ -75,7 +76,7 @@ class MainConfig:
 
     epochs: int = MISSING
 
-    dataset: BaseDataset = MISSING
+    dataset: BaseDatasetConfig = MISSING
     train_dataloader: Dataloaders = field(default_factory=Dataloaders)
     val_dataloader: Dataloaders = field(default_factory=Dataloaders)
 
