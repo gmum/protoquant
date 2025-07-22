@@ -2,8 +2,7 @@ import os
 import pandas as pd
 from torchvision.datasets import VisionDataset
 import torchvision.io as io
-from torch.utils.data import Dataset
-from src.datasets.construct_dataset import get_default_image_transforms
+from src.datasets.transforms import get_default_image_transforms
 
 
 class CUB200(VisionDataset):

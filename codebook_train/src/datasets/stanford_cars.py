@@ -1,7 +1,7 @@
 # import dataloaders
 from torchvision.datasets import StanfordCars
 from torch.utils.data import Dataset
-from src.datasets.construct_dataset import get_default_image_transforms
+from src.datasets.transforms import get_default_image_transforms
 
 
 def get_stanford_cars(
@@ -31,14 +31,14 @@ def get_stanford_cars(
     )
 
     train_dataset = StanfordCars(
-        root=path, split="train", transform=train_transform, download=True
+        root=path, split="train", transform=train_transform, download=False
     )
 
     validate_dataset = StanfordCars(
         root=path,
         split="test",  # Stanford Cars uses 'test' for the validation split
         transform=test_transform,
-        download=True,
+        download=False,
     )
 
     return train_dataset, validate_dataset

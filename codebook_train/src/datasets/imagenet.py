@@ -1,5 +1,5 @@
 from torchvision.datasets import ImageNet
-from src.datasets.construct_dataset import get_default_image_transforms
+from src.datasets.transforms import get_default_image_transforms
 
 
 def get_imagenet1k(

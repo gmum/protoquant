@@ -104,8 +104,9 @@ def prepare_codebook_training(
 
     schedulers = create_schedulers(
         optimizers=optimizers,
-        cfg=cfg,
         epoch_iters=len(train_dataloader),
+        warmup_epochs=cfg.training.warmup_epochs,
+        epochs=cfg.epochs,
     )
     logger.info(f"Schedulers: {schedulers}")
 

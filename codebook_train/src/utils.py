@@ -71,7 +71,7 @@ def train_epoch(
                 {"Train Loss": loss.item(), "Train Accuracy": accuracy.item()}
             )
 
-        if i % (len(train_dataloader) // 10) == 0:
+        if i % (len(train_dataloader) // 5) == 0:
             logger.info(
                 f"Iteration: {i} / {len(train_dataloader)}, Loss: {loss.item()}, Accuracy: {accuracy.item()}"
             )
@@ -255,28 +255,25 @@ def create_optimizers(
 
 
 def create_schedulers(
-    optimizers: list[torch.optim.Optimizer], cfg: MainConfig, epoch_iters: int
+    optimizers: list[torch.optim.Optimizer], epoch_iters: int, warmup_epochs: int, epochs: int
 ) -> list[torch.optim.lr_scheduler._LRScheduler]:
     """Create schedulers for the optimizers
 
     Args:
         optimizers (list[torch.optim.Optimizer]): List of optimizers
-        cfg (MainConfig): The configuration object
         epoch_iters (int): Number of iterations per epoch
+        warmup_epochs (int): Number of warmup epochs
+        epochs (int): Total number of epochs
 
     Returns:
         list[torch.optim.lr_scheduler._LRScheduler]: List of schedulers
     """
 
-    if not cfg.training.enable_schedulers:
-        logger.info("Schedulers are disabled")
-        return []
-
     schedulers: list[torch.optim.lr_scheduler._LRScheduler] = []
-    total_iterations = epoch_iters * cfg.epochs
+    total_iterations = epoch_iters * epochs
     logger.info(f"Total iterations: {total_iterations}")
 
-    linear_scheduler_iters = cfg.training.warmup_epochs * epoch_iters
+    linear_scheduler_iters = warmup_epochs * epoch_iters
     linear_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizers[0],
         start_factor=0.1,

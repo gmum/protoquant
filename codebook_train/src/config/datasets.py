@@ -51,9 +51,19 @@ class Flowers102Config(BaseDatasetConfig):
     random_erase: Optional[float] = 0.1
     horizontal_flip: Optional[float] = 0.5
 
+@dataclass
+class StanfordDogsConfig(BaseDatasetConfig):
+    name: str = "stanford_dogs"
+    num_classes: int = 120
+    resize_size: int = 256
+    crop_size: int = 224
+    random_erase: Optional[float] = 0.1
+    horizontal_flip: Optional[float] = 0.5
+
 
 config_store = ConfigStore.instance()
 config_store.store(group="dataset", name="cub200", node=CUB200Config)
 config_store.store(group="dataset", name="imagenet1k", node=ImageNet1KConfig)
 config_store.store(group="dataset", name="stanford_cars", node=StanfordCarsConfig)
 config_store.store(group="dataset", name="flowers102", node=Flowers102Config)
+config_store.store(group="dataset", name="stanford_dogs", node=StanfordDogsConfig)
