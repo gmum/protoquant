@@ -2,14 +2,14 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
-from src.codebook_wrappers import create_codebook_wrapper, CNNCodebookWrapper
-from src.construct_model import construct_model
+from src.models.codebook_wrappers import create_codebook_wrapper, CNNCodebookWrapper
+from src.models.construct_model import construct_model
 from src.datasets.construct_dataset import get_dataloaders, get_dataset
-from src.utils import (
+from src.training import (
     validate_epoch,
-    set_reproducibility,
     validate_epoch_cosine_codebook,
 )
+from src.utils import set_reproducibility
 from datetime import datetime
 import logging
 import hydra
@@ -72,7 +72,10 @@ def prepare_codebook_pruning(
 
     train_ds, val_ds = get_dataset(cfg)
     _, val_dataloader = get_dataloaders(
-        cfg, train_ds, val_ds, train_sampler=None, val_sampler=None
+        train_dataset=train_ds,
+        val_dataset=val_ds,
+        train_dl_config=cfg.train_dataloader,
+        val_dl_config=cfg.val_dataloader,
     )
     logger.info("Validate the base model")
     base_top1_acc, base_top5_acc = validate_epoch(
@@ -102,13 +105,14 @@ def prepare_codebook_pruning(
         target_num_codes=cfg.target_num_codes,
         device=device,
         steps=cfg.steps,
+        num_classes=cfg.dataset.num_classes,
     )
 
     hydra_path = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
     current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     out_codebook_path = (
         hydra_path
-        / f"pruned_{cfg.target_num_codes}_{cfg.model.name}_codebook_{current_date}.pth"
+        / f"pruned_{cfg.target_num_codes}_{cfg.model.name}_{cfg.dataset.name}_codebook_{current_date}.pth"
     )
     torch.save(model_with_codebook.codebook.state_dict(), out_codebook_path)
     logger.info(f"Saved pruned codebook to {out_codebook_path}")
@@ -124,6 +128,7 @@ def codebook_pruning(
     target_num_codes: int,
     device: torch.device,
     steps: int,
+    num_classes: int,
     wandb_run=None,
 ):
     codes_per_step = (num_codes - target_num_codes) // steps
@@ -131,7 +136,7 @@ def codebook_pruning(
         logger.info(f"Step {step + 1}/{steps}")
 
         val_statistics = validate_epoch_cosine_codebook(
-            model=model, val_dataloader=val_dataloader, device=device
+            model=model, val_dataloader=val_dataloader, device=device, num_classes=num_classes
         )
         val_statistics = {f"val_{k}": v for k, v in val_statistics.items()}
         logger.info(f"Validation statistics: {val_statistics}")
@@ -158,7 +163,7 @@ def codebook_pruning(
     # final validation
     logger.info("Final validation after pruning")
     val_statistics = validate_epoch_cosine_codebook(
-        model=model, val_dataloader=val_dataloader, device=device
+        model=model, val_dataloader=val_dataloader, device=device, num_classes=num_classes
     )
     val_statistics = {f"val_{k}": v for k, v in val_statistics.items()}
     logger.info(f"Validation statistics: {val_statistics}")

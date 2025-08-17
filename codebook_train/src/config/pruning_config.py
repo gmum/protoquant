@@ -9,7 +9,7 @@ from src.config.codebooks import BaseCodebookConfig
 from src.config.datasets import BaseDatasetConfig
 
 from src.config.main_config import (
-    Dataloaders,
+    DataloaderConfig,
     WandbConfig,
     ModelConfig,
     TrainingConfig,
@@ -33,8 +33,8 @@ class PruningConfig:
     steps: int = MISSING
 
     dataset: BaseDatasetConfig = MISSING
-    train_dataloader: Dataloaders = field(default_factory=Dataloaders)
-    val_dataloader: Dataloaders = field(default_factory=Dataloaders)
+    train_dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
+    val_dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
 
     codebook: BaseCodebookConfig = MISSING
     codebook_path: str = MISSING

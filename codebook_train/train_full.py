@@ -55,8 +55,6 @@ def main(args):
     args.checkpoint_path.mkdir(exist_ok=True)
     checkpoint_tracker = utils.CheckpointTracker()
 
-    # --- Select and Load Data ---
-    
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     logger.info(f"Loading '{args.dataset}' dataset...")
@@ -100,9 +98,20 @@ def main(args):
     logger.info(f"Train loader size: {len(train_loader)} batches")
 
     # --- Initialize Model ---
-    logger.info("Loading ConvNeXt Tiny and preparing for fine-tuning...")
-    model = models.convnext_tiny(weights=models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1)
-    model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
+    logger.info(f"Loading {args.model_name} and preparing for fine-tuning...")
+    # --- Select and Load Data ---
+    if args.model_name == "convnext_tiny":
+        model = models.convnext_tiny(weights=models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1)
+        model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
+    elif args.model_name == "convnext_large":
+        model = models.convnext_large(weights=models.ConvNeXt_Large_Weights.IMAGENET1K_V1)
+        model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
+    elif args.model_name == "resnet50":
+        model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+    else:
+        raise ValueError(f"Unsupported model: {args.model_name}")
+
     model = model.to(DEVICE)
     logger.info(f"Model: {model}")
 
@@ -153,7 +162,7 @@ def main(args):
             
             torch.save(
                 model.state_dict(),
-                args.checkpoint_path / f"{args.dataset}_convnext_full_{timestamp}.pth",
+                args.checkpoint_path / f"{args.dataset}_{args.model_name}_full_{timestamp}.pth",
             )
 
     logger.info("Training finished.")
@@ -164,7 +173,12 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Train ConvNeXt using utility functions."
+        description="Train a model using utility functions."
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        help="Name of the model to train.",
     )
     parser.add_argument(
         "--dataset",

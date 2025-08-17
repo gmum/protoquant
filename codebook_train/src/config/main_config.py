@@ -13,7 +13,7 @@ from logging import INFO
 
 
 @dataclass
-class Dataloaders:
+class DataloaderConfig:
     batch_size: int = 32
     num_workers: int = 4
     pin_memory: bool = True
@@ -77,8 +77,8 @@ class MainConfig:
     epochs: int = MISSING
 
     dataset: BaseDatasetConfig = MISSING
-    train_dataloader: Dataloaders = field(default_factory=Dataloaders)
-    val_dataloader: Dataloaders = field(default_factory=Dataloaders)
+    train_dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
+    val_dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
 
     codebook: BaseCodebookConfig = MISSING
     codebook_path: Optional[str] = None

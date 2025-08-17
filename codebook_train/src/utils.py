@@ -1,13 +1,13 @@
 import logging
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 import torch
 import torch.nn as nn
 import random
 import numpy as np
 from src.distributed_utils import create_samplers
 from src.training import extract_features_from_backbone
-from src.codebook_wrappers import CNNCodebookWrapper
+from src.models.codebook_wrappers import CNNCodebookWrapper
 from src.config.main_config import MainConfig
 import hydra
 from src.config.codebook_init import BaseInitializationConfig
@@ -15,193 +15,6 @@ from omegaconf import OmegaConf
 import functools
 
 logger = logging.getLogger(__name__)
-
-
-def validate_epoch(
-    model: nn.Module, val_dataloader: torch.utils.data.DataLoader, device: torch.device
-) -> tuple[float, float]:
-    model.eval()
-    top1_correct, top5_correct, total = 0, 0, 0
-
-    with torch.no_grad():
-        for inputs, labels in val_dataloader:
-            inputs, labels = inputs.to(device), labels.to(device)
-
-            logits = model(inputs)
-            _, pred = logits.topk(5, 1, True, True)
-
-            total += labels.size(0)
-            top1_correct += (pred[:, :1] == labels.view(-1, 1)).sum().item()
-            top5_correct += (pred == labels.view(-1, 1)).sum().item()
-
-    top1_acc = (top1_correct / total) * 100
-    top5_acc = (top5_correct / total) * 100
-    return top1_acc, top5_acc
-
-
-def train_epoch(
-    model: nn.Module,
-    train_dataloader: torch.utils.data.DataLoader,
-    transforms: torch.nn.Module,
-    optimizers: list[torch.optim.Optimizer],
-    criterion: nn.Module,
-    device: torch.device,
-    wandb_run=None,
-) -> None:
-    model.train()
-
-    for i, (images, labels) in enumerate(train_dataloader):
-        images, labels = images.to(device), labels.to(device)
-        transformed_images, transformed_labels = transforms(images, labels)
-
-        for optimizer in optimizers:
-            optimizer.zero_grad()
-
-        logits = model(transformed_images)
-        loss = criterion(logits, transformed_labels)
-        loss.backward()
-
-        for optimizer in optimizers:
-            optimizer.step()
-
-        accuracy = (logits.argmax(1) == labels).float().mean()
-
-        if wandb_run:
-            wandb_run.log(
-                {"Train Loss": loss.item(), "Train Accuracy": accuracy.item()}
-            )
-
-        if i % (len(train_dataloader) // 5) == 0:
-            logger.info(
-                f"Iteration: {i} / {len(train_dataloader)}, Loss: {loss.item()}, Accuracy: {accuracy.item()}"
-            )
-
-
-def train_epoch_cosine_codebook(
-    model: CNNCodebookWrapper,
-    train_dataloader: torch.utils.data.DataLoader,
-    transforms: torch.nn.Module,
-    optimizers: list[torch.optim.Optimizer],
-    schedulers: list[torch.optim.lr_scheduler._LRScheduler],
-    criterion: nn.Module,
-    task_loss_weight: float,
-    codebook_loss_weight: float,
-    device: torch.device,
-    scaler: torch.amp.GradScaler = None,
-    wandb_run=None,
-) -> dict[str, Any]:
-    """Train a single epoch of the model with cosine codebook
-
-    Args:
-        model (CNNCodebookWrapper): Wrapper around ConvNext model with cosine codebook
-        train_dataloader (torch.utils.data.DataLoader): DataLoader for training data
-        transforms (torch.nn.Module): Transformations to apply to the input data
-        optimizers (list[torch.optim.Optimizer]): List of optimizers to use
-        schedulers (list[torch.optim.lr_scheduler._LRScheduler]): List of schedulers to use
-        criterion (nn.Module): Loss function to use
-        task_loss_weight (float): Weight for the task loss
-        codebook_loss_weight (float): Weight for the codebook loss
-        device (torch.device): Device to use for training
-        scaler (torch.amp.GradScaler): GradScaler for mixed precision training
-        wandb_run (_type_, optional): Wandb object for logging. Defaults to None.
-
-    Returns:
-        dict[str, float]: Statistics of the codebook after training
-    """
-
-    model.train()
-
-    for batch, (images, labels) in enumerate(train_dataloader):
-        images, labels = (
-            images.to(device, non_blocking=True),
-            labels.to(device, non_blocking=True),
-        )
-        transformed_images, transformed_labels = transforms(images, labels)
-
-        for optimizer in optimizers:
-            optimizer.zero_grad()
-
-        # Forward pass with autocast - enabled parameter handles AMP automatically
-        with torch.amp.autocast(device_type=device.type, enabled=scaler.is_enabled()):
-            logits, codebook_loss = model(transformed_images)
-            task_loss = criterion(logits, transformed_labels)
-            total_loss = (
-                task_loss_weight * task_loss + codebook_loss_weight * codebook_loss
-            )
-
-        # Backward pass with scaling - scaler handles whether to scale or not
-        scaler.scale(total_loss).backward()
-
-        # Unscale gradients and step optimizers
-        for optimizer in optimizers:
-            scaler.step(optimizer)
-        scaler.update()
-
-        # Step schedulers after each epoch
-        for scheduler in schedulers:
-            scheduler.step()
-
-        if (batch + 1) % (len(train_dataloader) // 5) == 0:
-            accuracy = (logits.argmax(1) == labels).float().mean()
-            log_dict = {
-                "Total Loss": total_loss.item(),
-                "Task Loss": task_loss.item(),
-                "Codebook Loss": codebook_loss.item(),
-                "Top1 Accuracy": accuracy.item() * 100,
-            }
-
-            # Only log scaler scale if AMP is enabled
-            if scaler.is_enabled():
-                log_dict["Scaler Scale"] = scaler.get_scale()
-
-            if wandb_run:
-                wandb_run.log(log_dict)
-
-            logger.info(f"Batch: {batch + 1} / {len(train_dataloader)}")
-            logger.info(log_dict)
-
-    codebook_statistics = model.codebook.get_statistics()
-    model.codebook.reset_statistics()
-
-    return codebook_statistics
-
-
-def validate_epoch_cosine_codebook(
-    model: nn.Module, val_dataloader: torch.utils.data.DataLoader, device: torch.device
-) -> dict[str, Any]:
-    """Validate the model for a single epoch
-
-    Args:
-        model (nn.Module): The model to validate
-        val_dataloader (torch.utils.data.DataLoader): DataLoader for validation data
-        device (torch.device): Device to use for validation
-
-    Returns:
-        dict[str, Any]: Statistics of the codebook after validation
-    """
-
-    model.eval()
-    top1_correct, top5_correct, total = 0, 0, 0
-    with torch.no_grad():
-        for inputs, labels in val_dataloader:
-            inputs, labels = inputs.to(device), labels.to(device)
-
-            logits, _ = model(inputs)
-            _, pred = logits.topk(5, 1, True, True)
-
-            total += labels.size(0)
-            top1_correct += (pred[:, :1] == labels.view(-1, 1)).sum().item()
-            top5_correct += (pred == labels.view(-1, 1)).sum().item()
-
-    top1_acc = (top1_correct / total) * 100
-    top5_acc = (top5_correct / total) * 100
-
-    codebook_statistics = model.codebook.get_statistics()
-    model.codebook.reset_statistics()
-    codebook_statistics["Top1 Accuracy"] = top1_acc
-    codebook_statistics["Top5 Accuracy"] = top5_acc
-
-    return codebook_statistics
 
 
 def set_reproducibility(seed: int) -> None:
@@ -476,11 +289,7 @@ def save_checkpoint(
 
     # Save model
     model_path = hydra_path / f"model_{name}.pth"
-    logger.info(
-        f"Saving model (val_acc={val_accuracy:.2f}% at epoch {epoch}) to {model_path}"
-    )
-    torch.save(base_model.state_dict(), model_path)
-
+    
     # Save codebook
     codebook_path = hydra_path / f"codebook_{name}.pth"
     logger.info(f"Saving codebook to {codebook_path}")

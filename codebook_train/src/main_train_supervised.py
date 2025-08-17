@@ -2,14 +2,13 @@ from datetime import datetime
 from pathlib import Path
 import torch
 import torch.nn as nn
-from src.codebook_wrappers import create_codebook_wrapper
-from src.construct_model import construct_model
+from src.models.codebook_wrappers import create_codebook_wrapper
+from src.models.construct_model import construct_model
 from src.datasets.construct_dataset import get_dataloaders, get_dataset
 from src.utils import (
     CheckpointTracker,
     construct_init_function,
     create_schedulers,
-    validate_epoch,
     save_checkpoint,
     create_optimizers,
     create_feature_dataloader,
@@ -17,6 +16,7 @@ from src.utils import (
 from src.training import (
     train_epoch_cosine_codebook,
     validate_epoch_cosine_codebook,
+    validate_epoch,
 )
 import logging
 import hydra
@@ -52,7 +52,12 @@ def prepare_codebook_training(
         seed=cfg.seed,
     )
     train_dataloader, val_dataloader = get_dataloaders(
-        cfg, train_ds, val_ds, train_sampler=train_sampler, val_sampler=val_sampler
+        train_dl_config=cfg.train_dataloader,
+        val_dl_config=cfg.val_dataloader,
+        train_dataset=train_ds,
+        val_dataset=val_ds,
+        train_sampler=train_sampler,
+        val_sampler=val_sampler,
     )
 
     logger.info("Validate the base model")
@@ -88,11 +93,13 @@ def prepare_codebook_training(
     logger.info(f"Model with codebook: {model_with_codebook}")
 
     # Change to DistributedDataParallel
+    find_unused = cfg.training.task_loss_weight == 0.0
     model_with_codebook = nn.parallel.DistributedDataParallel(
         model_with_codebook,
         device_ids=[device.index],
         output_device=device.index,
         broadcast_buffers=True,
+        find_unused_parameters=find_unused,
     )
 
     optimizers = create_optimizers(
@@ -181,7 +188,7 @@ def codebook_training(
     scaler = torch.amp.GradScaler(device=device.type, enabled=cfg.training.use_amp) # type: ignore
     checkpoint_tracker = CheckpointTracker()
     current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    checkpoint_name = f"{cfg.model.name}_{cfg.codebook.num_entries}_{current_date}.pth"
+    checkpoint_name = f"{cfg.model.name}_{cfg.codebook.num_entries}_{cfg.dataset.name}_{current_date}.pth"
 
     if scaler.is_enabled():
         logger.info("Using Automated Mixed Precision (AMP) training")
