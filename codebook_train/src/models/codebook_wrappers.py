@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import logging
 
-from src.models.adapters import MODEL_ADAPTERS
+from src.models.adapters import guess_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -33,22 +33,17 @@ class CNNCodebookWrapper(nn.Module):
 
 
 def create_codebook_wrapper(
-    model: nn.Module, 
-    codebook: nn.Module, 
-    model_name: str, 
-    unfreeze_before: int
+    model: nn.Module, codebook: nn.Module, model_name: str, unfreeze_before: int
 ) -> CNNCodebookWrapper:
     """Insert the codebook into the model using model-specific adapters"""
-    
-    if model_name not in MODEL_ADAPTERS:
-        raise ValueError(f"Model {model_name} not supported. Available: {list(MODEL_ADAPTERS.keys())}")
-    
-    adapter = MODEL_ADAPTERS[model_name]
-    
+
     # Set all parameters to not require gradients
     for param in model.parameters():
         param.requires_grad = False
-    
+
+    # Get the adapter for the model
+    adapter = guess_adapter(model)
+
     # Unfreeze specific layers if requested
     if unfreeze_before > 0:
         layers_to_unfreeze = adapter.get_unfreezable_layers(model, unfreeze_before)
@@ -56,16 +51,16 @@ def create_codebook_wrapper(
         for layer in layers_to_unfreeze:
             for param in layer.parameters():
                 param.requires_grad = True
-    
+
     # Create wrapper using adapter
     codebook_wrapper = CNNCodebookWrapper(
         features=adapter.extract_features(model),
         codebook=codebook,
         classifier=adapter.extract_classifier(model),
     )
-    
+
     # Enable gradients for codebook
     for param in codebook.parameters():
         param.requires_grad = True
-    
+
     return codebook_wrapper

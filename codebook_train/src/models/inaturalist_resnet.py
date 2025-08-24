@@ -11,6 +11,7 @@ Source: https://github.com/anguyen8/visual-correspondence-XAI/blob/main/ResNet-5
 
 import torch
 import torch.nn as nn
+from src.models_registry import register_model
 
 model_dir = "."
 
@@ -527,7 +528,11 @@ class ResNet_AvgPool_classifier(nn.Module):
         template = "resnet{}_features"
         return template.format(self.num_layers() + 1)
 
-def inaturalist_resnet50(num_classes: int = 1000, zero_init_residual: bool = False) -> ResNet_AvgPool_classifier:
+
+@register_model
+def inaturalist_resnet50(
+    num_classes: int = 1000, zero_init_residual: bool = False
+) -> ResNet_AvgPool_classifier:
     """
     Create a ResNet-50 model for iNaturalist classification.
 

@@ -68,7 +68,10 @@ def create_optimizers(
 
 
 def create_schedulers(
-    optimizers: list[torch.optim.Optimizer], epoch_iters: int, warmup_epochs: int, epochs: int
+    optimizers: list[torch.optim.Optimizer],
+    epoch_iters: int,
+    warmup_epochs: int,
+    epochs: int,
 ) -> list[torch.optim.lr_scheduler._LRScheduler]:
     """Create schedulers for the optimizers
 
@@ -289,7 +292,7 @@ def save_checkpoint(
 
     # Save model
     model_path = hydra_path / f"model_{name}.pth"
-    
+
     # Save codebook
     codebook_path = hydra_path / f"codebook_{name}.pth"
     logger.info(f"Saving codebook to {codebook_path}")

@@ -21,8 +21,6 @@ class CosineSimilarityCodebookConfig(BaseCodebookConfig):
     _target_: str = (
         f"{CosineSimilarityCodebook.__module__}.{CosineSimilarityCodebook.__qualname__}"
     )
-    mapping_dim_config: list[int] = field(default_factory=list)
-
 
 @dataclass
 class DimReductionWrapperConfig(BaseCodebookConfig):

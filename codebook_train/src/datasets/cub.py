@@ -66,6 +66,7 @@ def get_cub200(
     crop_value: int | None = None,
     random_erase: float | None = None,
     horizontal_flip: float | None = None,
+    is_precropped: bool = True,
 ) -> tuple[CUB200, CUB200]:
     """Constructs the CUB200-2011 dataset.
 
@@ -75,6 +76,7 @@ def get_cub200(
         crop_value (int | None): The size to crop the images to. Defaults to None.
         random_erase (float | None): The probability of applying random erasing. Defaults to None.
         horizontal_flip (float | None): The probability of applying horizontal flip. Defaults to None.
+        is_precropped (bool): Whether the images are pre-cropped. Defaults to True.
 
     Returns:
         tuple[CUB200, CUB200]: Train and validation datasets.
@@ -85,6 +87,7 @@ def get_cub200(
         crop_value=crop_value,
         random_erase=random_erase,
         horizontal_flip=horizontal_flip,
+        is_precropped=is_precropped,
     )
 
     train_dataset = CUB200(

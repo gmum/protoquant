@@ -1,6 +1,5 @@
 # import dataloaders
 from torchvision.datasets import StanfordCars
-from torch.utils.data import Dataset
 from src.datasets.transforms import get_default_image_transforms
 
 
@@ -10,6 +9,7 @@ def get_stanford_cars(
     crop_value: int | None = None,
     random_erase: float | None = None,
     horizontal_flip: float | None = None,
+    is_precropped: bool = False,
 ) -> tuple[StanfordCars, StanfordCars]:
     """Constructs the Stanford Cars dataset.
 
@@ -19,6 +19,7 @@ def get_stanford_cars(
         crop_value (int | None): The size to crop the images to. Defaults to None.
         random_erase (float | None): The probability of applying random erasing. Defaults to None.
         horizontal_flip (float | None): The probability of applying horizontal flip. Defaults to None.
+        is_precropped (bool): Whether the images are pre-cropped. Defaults to False.
 
     Returns:
         tuple[StanfordCars, StanfordCars]: Train and validation datasets.
@@ -28,6 +29,7 @@ def get_stanford_cars(
         crop_value=crop_value,
         random_erase=random_erase,
         horizontal_flip=horizontal_flip,
+        is_precropped=is_precropped,
     )
 
     train_dataset = StanfordCars(

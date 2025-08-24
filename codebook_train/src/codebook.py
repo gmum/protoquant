@@ -22,7 +22,7 @@ class VectorQuantizeCodebook(nn.Module):
             dim=embedding_dim,
             **kwargs,
         )
-        self.register_buffer("code_usage", torch.zeros(num_entries, dtype=torch.long))
+        self.code_usage = torch.zeros(num_entries, dtype=torch.long)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Quantize the vectors using the VQ-VAE codebook.
@@ -33,29 +33,45 @@ class VectorQuantizeCodebook(nn.Module):
         Returns:
             tuple[torch.Tensor, torch.Tensor]: Tuple with the quantized tensor and the commitment loss.
         """
-        assert len(x.shape) == 4
+        input_shape = x.shape
+        input_ndim = x.ndim
 
-        B, C, H, W = x.shape
-        x = x.view(B, C, H * W).permute(0, 2, 1)  # (B, H*W, C)
+        if input_ndim == 4:  # CNN case: (B, C, H, W)
+            # Reshape to (B*H*W, C)
+            B, C, H, W = input_shape
+            x_flat = x.permute(0, 2, 3, 1).reshape(-1, C).contiguous()
+        elif input_ndim == 3:  # ViT case: (B, num_tokens, depth)
+            # Reshape to (B*num_tokens, depth)
+            B, N, D = input_shape
+            x_flat = x.reshape(-1, D).contiguous()
+        else:
+            raise ValueError(f"Unsupported input tensor rank: {input_ndim}. Must be 3 or 4.")
 
-        quantized, indices, loss = self.quantizer(x)
-        quantized = quantized.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
-
-        self.code_usage.scatter_add_(
-            0,
-            indices.view(-1),
-            torch.ones_like(indices.view(-1), dtype=torch.long),
-        )
+        quantized_flat, code_indices, loss = self.quantizer(x_flat)
+        
+        with torch.no_grad():
+            if not self.training:
+                self.code_usage = self.code_usage.to(x_flat.device)
+                self.code_usage.scatter_add_(
+                    0,
+                    code_indices.view(-1),
+                    torch.ones_like(code_indices.view(-1), dtype=torch.long),
+                )
+        
+        # Reshape the quantized tensor back to the original input shape
+        if input_ndim == 4:
+            quantized = quantized_flat.view(B, H, W, C).permute(0, 3, 1, 2).contiguous()
+        else: # input_ndim == 3
+            quantized = quantized_flat.view(B, N, D).contiguous()
 
         return quantized, loss
 
-    def get_statistics(self) -> dict[str, torch.Tensor]:
+    def get_statistics(self) -> dict[str, torch.Tensor | float]:
         """Return statistics about the codebook usage.
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary with the statistics.
+            dict[str, torch.Tensor | float]: Dictionary with the statistics.
         """
-
         return {
             "code_usage": self.code_usage.clone(),
             "dead_ratio": (self.code_usage == 0).float().mean(),
@@ -73,19 +89,15 @@ class CosineSimilarityCodebook(nn.Module):
         self,
         num_entries: int,
         embedding_dim: int,
-        mapping_dim_config: list[int],
     ):
         super().__init__()
         self.embeddings = nn.Embedding(num_entries, embedding_dim)
 
-        mapping_layers = LinearGELUNorm.construct_layers(
-            [embedding_dim] + mapping_dim_config
-        )
-        self.codebook_mapping = nn.Sequential(*mapping_layers)
-
-        # Add tracking buffers
+        # Add tracking
         self.num_entries = num_entries
-        self.register_buffer("code_usage", torch.zeros(num_entries, dtype=torch.long))
+        self.code_usage = torch.zeros(num_entries, dtype=torch.long).to(
+            self.embeddings.weight.device
+        )
 
     def initialize_embeddings(
         self, init_func: Callable[[torch.Tensor], torch.Tensor]
@@ -111,8 +123,8 @@ class CosineSimilarityCodebook(nn.Module):
         Returns:
             torch.Tensor: Cosine similarity scores.
         """
-        x_unit = torch.functional.F.normalize(x, dim=-1)
-        codes_unit = torch.functional.F.normalize(codes, dim=-1)
+        x_unit = torch.nn.functional.normalize(x, dim=-1)
+        codes_unit = torch.nn.functional.normalize(codes, dim=-1)
         return x_unit @ codes_unit.t()
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -125,25 +137,43 @@ class CosineSimilarityCodebook(nn.Module):
             tuple[torch.Tensor, torch.Tensor]: Tuple with the quantized tensor and the commitment loss.
         """
 
-        assert len(x.shape) == 4
+        input_shape = x.shape
+        input_ndim = x.ndim
 
-        B, C, H, W = x.shape
-        x = x.view(B, C, H * W).permute(0, 2, 1)
+        if input_ndim == 4:  # CNN case: (B, C, H, W)
+            # Reshape to (B*H*W, C)
+            B, C, H, W = input_shape
+            x_flat = x.permute(0, 2, 3, 1).reshape(-1, C).contiguous()
+        elif input_ndim == 3:  # ViT case: (B, num_tokens, depth)
+            # Reshape to (B*num_tokens, depth)
+            B, N, D = input_shape
+            x_flat = x.reshape(-1, D).contiguous()
+        else:
+            raise ValueError(f"Unsupported input tensor rank: {input_ndim}. Must be 3 or 4.")
 
         with torch.no_grad():
-            mapped_codes = self.codebook_mapping(self.embeddings.weight)
-            similarity = self.calculate_similarity(x, mapped_codes)
+            similarity = self.calculate_similarity(x_flat, self.embeddings.weight)
             code_indices = torch.argmax(similarity, dim=-1)
 
-            self.code_usage.scatter_add_(
-                0,
-                code_indices.view(-1),
-                torch.ones_like(code_indices.view(-1), dtype=torch.long),
-            )
+            if not self.training:
+                self.code_usage = self.code_usage.to(x_flat.device)
+                self.code_usage.scatter_add_(
+                    0,
+                    code_indices.view(-1),
+                    torch.ones_like(code_indices.view(-1), dtype=torch.long),
+                )
 
-        quantized = self.codebook_mapping(self.embeddings(code_indices))
-        commitment_loss = torch.functional.F.mse_loss(quantized, x.detach())
-        quantized = quantized.view(B, H, W, C).permute(0, 3, 1, 2)
+        # Quantize by selecting the closest codes
+        quantized_flat = self.embeddings.weight.index_select(0, code_indices)
+
+        # Commitment loss: encourage encoder outputs to be close to the chosen code
+        commitment_loss = torch.nn.functional.mse_loss(quantized_flat, x_flat.detach())
+
+        # Reshape the quantized tensor back to the original input shape
+        if input_ndim == 4:
+            quantized = quantized_flat.view(B, H, W, C).permute(0, 3, 1, 2).contiguous()
+        else: # input_ndim == 3
+            quantized = quantized_flat.view(B, N, D).contiguous()
 
         return quantized, commitment_loss
 
@@ -182,7 +212,7 @@ class DimReductionWrapper(nn.Module):
         in_block = LinearGELUNorm.construct_layers([input_dim] + in_block_config)
         self.in_block = nn.Sequential(*in_block)
         self.codebook = CosineSimilarityCodebook(
-            num_entries, embedding_dim, mapping_dim_config
+            num_entries, embedding_dim
         )
 
         out_block = LinearGELUNorm.construct_layers([embedding_dim] + out_block_config)
@@ -209,11 +239,11 @@ class DimReductionWrapper(nn.Module):
 
         return quantized.permute(0, 3, 1, 2), commitment_loss
 
-    def get_statistics(self) -> dict[str, torch.Tensor]:
+    def get_statistics(self) -> dict[str, torch.Tensor | float]:
         """Return statistics about the codebook usage.
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary with the statistics.
+            dict[str, torch.Tensor | float]: Dictionary with the statistics.
         """
         return self.codebook.get_statistics()
 

@@ -2,11 +2,13 @@ import torch
 from torchvision.transforms import v2 as transforms_v2
 from src.config.constants import IMAGENET1K_MEAN, IMAGENET1K_STD
 
+
 def get_default_image_transforms(
     resize_value: int | None = None,
     crop_value: int | None = None,
     random_erase: float | None = None,
     horizontal_flip: float | None = None,
+    is_precropped: bool = False,
 ) -> tuple[transforms_v2.Compose, transforms_v2.Compose]:
     """Constructs a default set of image transforms for training and validation.
 
@@ -17,6 +19,7 @@ def get_default_image_transforms(
         crop_value (int | None): The size to crop the images to. Defaults to None.
         random_erase (float | None): The probability of applying random erasing. Defaults to None.
         horizontal_flip (float | None): The probability of applying horizontal flip. Defaults to None.
+        is_precropped (bool): Whether the images are cropped. Defaults to False.
 
     Returns:
         tuple[transforms_v2.Compose, transforms_v2.Compose]: Train and validation transforms.
@@ -25,8 +28,12 @@ def get_default_image_transforms(
     val_transforms = []
 
     if resize_value is not None:
-        train_transforms.append(transforms_v2.Resize(size=resize_value, antialias=True))
-        val_transforms.append(transforms_v2.Resize(size=resize_value, antialias=True))
+        if is_precropped:
+            train_transforms.append(transforms_v2.Resize(size=(resize_value, resize_value), antialias=True))
+            val_transforms.append(transforms_v2.Resize(size=(resize_value, resize_value), antialias=True))
+        else:
+            train_transforms.append(transforms_v2.Resize(size=resize_value, antialias=True))
+            val_transforms.append(transforms_v2.Resize(size=resize_value, antialias=True))
 
     if horizontal_flip is not None:
         train_transforms.append(transforms_v2.RandomHorizontalFlip(p=horizontal_flip))

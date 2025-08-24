@@ -39,7 +39,7 @@ def profile_training():
     output_dir = Path.cwd()
 
     # Create results content with execution time header
-    execution_header = f"EXECUTION TIME: {execution_time:.2f} seconds ({execution_time/60:.2f} minutes)\n"
+    execution_header = f"EXECUTION TIME: {execution_time:.2f} seconds ({execution_time / 60:.2f} minutes)\n"
     execution_header += (
         f"Profiling completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
     )

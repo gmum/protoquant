@@ -3,7 +3,7 @@ from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
 from src.models.codebook_wrappers import create_codebook_wrapper, CNNCodebookWrapper
-from src.models.construct_model import construct_model
+from src.construct_model import construct_model
 from src.datasets.construct_dataset import get_dataloaders, get_dataset
 from src.training import (
     validate_epoch,
@@ -136,7 +136,10 @@ def codebook_pruning(
         logger.info(f"Step {step + 1}/{steps}")
 
         val_statistics = validate_epoch_cosine_codebook(
-            model=model, val_dataloader=val_dataloader, device=device, num_classes=num_classes
+            model=model,
+            val_dataloader=val_dataloader,
+            device=device,
+            num_classes=num_classes,
         )
         val_statistics = {f"val_{k}": v for k, v in val_statistics.items()}
         logger.info(f"Validation statistics: {val_statistics}")
@@ -163,7 +166,10 @@ def codebook_pruning(
     # final validation
     logger.info("Final validation after pruning")
     val_statistics = validate_epoch_cosine_codebook(
-        model=model, val_dataloader=val_dataloader, device=device, num_classes=num_classes
+        model=model,
+        val_dataloader=val_dataloader,
+        device=device,
+        num_classes=num_classes,
     )
     val_statistics = {f"val_{k}": v for k, v in val_statistics.items()}
     logger.info(f"Validation statistics: {val_statistics}")

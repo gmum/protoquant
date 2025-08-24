@@ -15,9 +15,9 @@ from logging import INFO
 @dataclass
 class DataloaderConfig:
     batch_size: int = 32
-    num_workers: int = 4
+    num_workers: int = 2
     pin_memory: bool = True
-    drop_last: bool = False
+    drop_last: bool = True
 
 
 @dataclass

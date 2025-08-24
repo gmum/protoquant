@@ -3,7 +3,7 @@ import logging
 from omegaconf import OmegaConf
 from src.models.codebook_wrappers import create_codebook_wrapper
 from src.datasets.construct_dataset import get_dataloaders
-from src.models.construct_model import construct_model
+from src.construct_model import construct_model
 from src.utils import set_reproducibility, save_checkpoint, construct_init_function
 import torch
 import torch.nn as nn

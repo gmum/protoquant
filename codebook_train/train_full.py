@@ -14,11 +14,13 @@ import torchvision.transforms.v2 as transforms_v2
 # Import utility functions from utils.py
 import src.utils as utils
 
+from src.training import train_epoch, validate_epoch
 # Import data loading functions from the new 'datasets' package
 from src.datasets.cub import get_cub200
 from src.datasets.flowers102 import get_flowers102
 from src.datasets.stanford_cars import get_stanford_cars
 from src.datasets.stanford_dogs import get_stanford_dogs
+from src.models.deit import deit_small_patch16_224
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -74,10 +76,11 @@ def main(args):
 
     train_dataset, val_dataset = loader_fn(
         path=args.data_path,
-        resize_value=256,
-        crop_value=224,
+        resize_value=224 if args.dataset == "cub200" else 256,
+        crop_value=None if args.dataset == "cub200" else 224,
         random_erase=0.1,
         horizontal_flip=0.5,
+        is_precropped=args.dataset == "cub200",
     )
     logger.info(f"Dataset loaded. Found {num_classes} classes.")
 
@@ -104,20 +107,25 @@ def main(args):
         model = models.convnext_tiny(weights=models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1)
         model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
     elif args.model_name == "convnext_large":
-        model = models.convnext_large(weights=models.ConvNeXt_Large_Weights.IMAGENET1K_V1)
+        model = models.convnext_large(
+            weights=models.ConvNeXt_Large_Weights.IMAGENET1K_V1
+        )
         model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
     elif args.model_name == "resnet50":
         model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
+    elif args.model_name == "deit_small_patch16_224":
+        model = deit_small_patch16_224(pretrained=True)
+        model.head = nn.Linear(model.head.in_features, num_classes)
     else:
         raise ValueError(f"Unsupported model: {args.model_name}")
 
     model = model.to(DEVICE)
     logger.info(f"Model: {model}")
 
-    #for param in model.features.parameters():
-        #param.requires_grad = False
-        
+    # for param in model.features.parameters():
+    # param.requires_grad = False
+
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
     scheduler = utils.create_schedulers(
         optimizers=[optimizer],
@@ -135,9 +143,9 @@ def main(args):
     logger.info("\nStarting training...")
     # --- Training & Validation Loop using utils ---
     for epoch in range(args.num_epochs):
-        logger.info(f"--- Epoch {epoch+1}/{args.num_epochs} ---")
+        logger.info(f"--- Epoch {epoch + 1}/{args.num_epochs} ---")
 
-        utils.train_epoch(
+        train_epoch(
             model=model,
             train_dataloader=train_loader,
             transforms=cutmix_or_mixup,
@@ -147,28 +155,31 @@ def main(args):
             wandb_run=None,
         )
 
-        top1_acc, top5_acc = utils.validate_epoch(
+        top1_acc, top5_acc = validate_epoch(
             model=model, val_dataloader=val_loader, device=DEVICE
         )
 
         logger.info(
             f"Validation | Top-1 Accuracy: {top1_acc:.2f}% | Top-5 Accuracy: {top5_acc:.2f}%"
         )
-        
+
         # --- Scheduler Step ---
         scheduler.step()
 
         if checkpoint_tracker.is_best(top1_acc):
-            
+            logger.info(f"Saving the best checkpoint at epoch: {epoch + 1} with accuracy: {top1_acc:.2f}%")
+            logger.info(f"Timestamp of the checkpoint {timestamp}")
             torch.save(
                 model.state_dict(),
-                args.checkpoint_path / f"{args.dataset}_{args.model_name}_full_{timestamp}.pth",
+                args.checkpoint_path
+                / f"{args.dataset}_{args.model_name}_full_{timestamp}.pth",
             )
 
     logger.info("Training finished.")
     logger.info(
         f"Best validation Top-1 accuracy: {checkpoint_tracker.best_val_accuracy:.2f}%"
     )
+    logger.info(f"Saved at {args.dataset}_{args.model_name}_full_{timestamp}.pth")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from src.datasets.stanford_dogs import StanfordDogs, get_stanford_dogs
 
 AVAILABLE_DATASET = CUB200 | StanfordCars | Flowers102 | ImageNet | StanfordDogs
 
+
 def get_dataset(
     cfg: MainConfig,
 ) -> tuple[AVAILABLE_DATASET, AVAILABLE_DATASET]:
@@ -22,6 +23,7 @@ def get_dataset(
             resize_value=cfg.dataset.resize_size,
             random_erase=cfg.dataset.random_erase,
             horizontal_flip=cfg.dataset.horizontal_flip,
+            is_precropped=cfg.dataset.is_precropped,
         )
     elif cfg.dataset.name == "cub200":
         return get_cub200(
@@ -30,6 +32,7 @@ def get_dataset(
             resize_value=cfg.dataset.resize_size,
             random_erase=cfg.dataset.random_erase,
             horizontal_flip=cfg.dataset.horizontal_flip,
+            is_precropped=cfg.dataset.is_precropped,
         )
     elif cfg.dataset.name == "stanford_cars":
         return get_stanford_cars(
@@ -38,6 +41,7 @@ def get_dataset(
             resize_value=cfg.dataset.resize_size,
             random_erase=cfg.dataset.random_erase,
             horizontal_flip=cfg.dataset.horizontal_flip,
+            is_precropped=cfg.dataset.is_precropped,
         )
     elif cfg.dataset.name == "flowers102":
         return get_flowers102(
@@ -46,6 +50,7 @@ def get_dataset(
             resize_value=cfg.dataset.resize_size,
             random_erase=cfg.dataset.random_erase,
             horizontal_flip=cfg.dataset.horizontal_flip,
+            is_precropped=cfg.dataset.is_precropped,
         )
     elif cfg.dataset.name == "stanford_dogs":
         return get_stanford_dogs(
@@ -54,6 +59,7 @@ def get_dataset(
             resize_value=cfg.dataset.resize_size,
             random_erase=cfg.dataset.random_erase,
             horizontal_flip=cfg.dataset.horizontal_flip,
+            is_precropped=cfg.dataset.is_precropped,
         )
     else:
         raise ValueError(f"Unknown dataset: {cfg.dataset}")
@@ -104,5 +110,3 @@ def get_dataloaders(
     )
 
     return train_loader, validation_loader
-
-

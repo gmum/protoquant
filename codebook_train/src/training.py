@@ -286,3 +286,113 @@ def train_epoch(
             logger.info(
                 f"Iteration: {i} / {len(train_dataloader)}, Loss: {loss.item()}, Accuracy: {accuracy.item()}"
             )
+
+
+def train_epoch_ema_codebook(
+    model: nn.Module,
+    train_dataloader: torch.utils.data.DataLoader,
+    num_classes: int,
+    transforms: torch.nn.Module,
+    criterion: nn.Module,
+    task_loss_weight: float,
+    codebook_loss_weight: float,
+    device: torch.device,
+    wandb_run=None,
+) -> dict[str, torch.Tensor | float]:
+    """Train a single epoch of the model with an EMA codebook.
+    The codebook is updated via EMA during the forward pass.
+    The codebook loss is used to train the encoder.
+    """
+
+    model.train()
+    log_interval = len(train_dataloader) // 5
+
+    accuracy_metric = Accuracy(task="multiclass", num_classes=num_classes).to(device)
+
+    for batch, (images, labels) in enumerate(train_dataloader):
+        images, labels = images.to(device), labels.to(device)
+        transformed_images, transformed_labels = transforms(images, labels)
+
+        # Forward pass
+        logits, codebook_loss = model(transformed_images)
+        task_loss = criterion(logits, transformed_labels)
+        total_loss = task_loss_weight * task_loss + codebook_loss_weight * codebook_loss
+
+        # Backward pass
+        total_loss.backward()
+
+        should_log = log_interval and (
+            (batch + 1) % log_interval == len(train_dataloader) - 1
+        )
+        if should_log:
+            accuracy_metric.update(logits, labels)
+            accuracy = accuracy_metric.compute() * 100
+            accuracy_metric.reset()
+
+            log_dict = {
+                "Total Loss": total_loss.item(),
+                "Task Loss": task_loss.item(),
+                "Codebook Loss": codebook_loss.item(),
+                "Top1 Accuracy": accuracy.item(),
+            }
+
+            if wandb_run:
+                wandb_run.log(log_dict)
+
+            logger.info(f"Batch: {batch + 1} / {len(train_dataloader)}")
+            logger.info(log_dict)
+
+    codebook = model.codebook
+    codebook_statistics = codebook.get_statistics()
+    codebook.reset_statistics()
+
+    return codebook_statistics
+
+
+def validate_epoch_ema_codebook(
+    model: nn.Module,
+    val_dataloader: torch.utils.data.DataLoader,
+    num_classes: int,
+    device: torch.device,
+) -> dict[str, Any]:
+    """Validate the model with an EMA codebook for a single epoch."""
+
+    model.eval()
+
+    # Initialize torchmetrics for validation
+    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1).to(
+        device
+    )
+    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=5).to(
+        device
+    )
+
+    with torch.no_grad():
+        for inputs, labels in val_dataloader:
+            inputs, labels = (
+                inputs.to(device, non_blocking=True),
+                labels.to(device, non_blocking=True),
+            )
+
+            logits, _ = model(inputs)
+
+            # Update metrics
+            top1_accuracy.update(logits, labels)
+            top5_accuracy.update(logits, labels)
+
+    # Compute final accuracies
+    top1_acc = top1_accuracy.compute() * 100
+    top5_acc = top5_accuracy.compute() * 100
+
+    codebook = model.codebook
+
+    # Convert to Python scalars only for logging/return
+    codebook_statistics = codebook.get_statistics()
+    codebook_statistics["Top1 Accuracy"] = top1_acc.item()
+    codebook_statistics["Top5 Accuracy"] = top5_acc.item()
+
+    logger.info(
+        f"Validation - Top1: {top1_acc.item():.2f}%, Top5: {top5_acc.item():.2f}%"
+    )
+
+    return codebook_statistics

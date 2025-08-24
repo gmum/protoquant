@@ -10,6 +10,8 @@ import torch.nn as nn
 from timm.layers import trunc_normal_, DropPath
 import torch.nn.functional as F
 
+from src.models_registry import register_model
+
 
 class LayerNorm(nn.Module):
     """LayerNorm that supports two data formats: channels_last (default) or channels_first.
@@ -165,31 +167,37 @@ class ConvNeXtV2Backbone(nn.Module):
         return x
 
 
+@register_model
 def convnextv2_atto_backbone(**kwargs):
     model = ConvNeXtV2Backbone(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
     return model
 
 
+@register_model
 def convnextv2_femto_backbone(**kwargs):
     model = ConvNeXtV2Backbone(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
     return model
 
 
+@register_model
 def convnext_pico_backbone(**kwargs):
     model = ConvNeXtV2Backbone(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
     return model
 
 
+@register_model
 def convnextv2_nano_backbone(**kwargs):
     model = ConvNeXtV2Backbone(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
     return model
 
 
+@register_model
 def convnextv2_tiny_backbone(**kwargs):
     model = ConvNeXtV2Backbone(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
     return model
 
 
+@register_model
 def convnextv2_base_backbone(**kwargs):
     model = ConvNeXtV2Backbone(
         depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs
@@ -197,6 +205,7 @@ def convnextv2_base_backbone(**kwargs):
     return model
 
 
+@register_model
 def convnextv2_large_backbone(**kwargs):
     model = ConvNeXtV2Backbone(
         depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs
@@ -204,6 +213,7 @@ def convnextv2_large_backbone(**kwargs):
     return model
 
 
+@register_model
 def convnextv2_huge_backbone(**kwargs):
     model = ConvNeXtV2Backbone(
         depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs
