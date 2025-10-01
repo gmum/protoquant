@@ -43,7 +43,7 @@ def train_epoch_cosine_codebook(
     """
 
     model.train()
-    log_interval = len(train_dataloader) // 5
+    log_interval = (len(train_dataloader) // 5) or 1
 
     accuracy_metric = Accuracy(task="multiclass", num_classes=num_classes).to(device)
 
@@ -101,9 +101,9 @@ def train_epoch_cosine_codebook(
     if isinstance(model, nn.parallel.DistributedDataParallel):
         codebook: CosineSimilarityCodebook = model.module.codebook
     elif isinstance(model, CNNCodebookWrapper):
-        codebook: CosineSimilarityCodebook = model.codebook
+        codebook: CosineSimilarityCodebook = model.codebook # type: ignore
     else:
-        codebook: CosineSimilarityCodebook = model
+        codebook: CosineSimilarityCodebook = model # type: ignore
 
     codebook_statistics = codebook.get_statistics()
     codebook.reset_statistics()
@@ -169,7 +169,7 @@ def extract_features_from_backbone(
     feature_backbone: nn.Module | nn.parallel.DistributedDataParallel,
     dataloader: torch.utils.data.DataLoader,
     device: torch.device,
-    transforms: torch.nn.Module = None,
+    transforms: torch.nn.Module | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Extract features from a model using the provided dataloader
 
@@ -257,6 +257,7 @@ def train_epoch(
     optimizers: list[torch.optim.Optimizer],
     criterion: nn.Module,
     device: torch.device,
+    schedulers: list[torch.optim.lr_scheduler._LRScheduler] | None = None,
     wandb_run=None,
 ) -> None:
     model.train()
@@ -275,6 +276,10 @@ def train_epoch(
         for optimizer in optimizers:
             optimizer.step()
 
+        if schedulers is not None:
+            for scheduler in schedulers:
+                scheduler.step()
+
         accuracy = (logits.argmax(1) == labels).float().mean()
 
         if wandb_run:
@@ -282,7 +287,7 @@ def train_epoch(
                 {"Train Loss": loss.item(), "Train Accuracy": accuracy.item()}
             )
 
-        if i % (len(train_dataloader) // 5) == 0:
+        if i % ((len(train_dataloader) // 5) or 1) == 0:
             logger.info(
                 f"Iteration: {i} / {len(train_dataloader)}, Loss: {loss.item()}, Accuracy: {accuracy.item()}"
             )

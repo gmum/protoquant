@@ -2,8 +2,8 @@ import os
 import pandas as pd
 from torchvision.datasets import VisionDataset
 import torchvision.io as io
-from src.datasets.transforms import get_default_image_transforms
-
+from torchvision.transforms.v2 import Compose
+from PIL import Image
 
 class CUB200(VisionDataset):
     def __init__(self, root, train=True, transform=None, target_transform=None):
@@ -49,7 +49,7 @@ class CUB200(VisionDataset):
         label = self.labels[index]
 
         # Use torchvision.io for faster image loading
-        image = io.read_image(img_path).float() / 255.0  # Normalize to [0,1]
+        image = Image.open(img_path).convert("RGB")
 
         if self.transform:
             image = self.transform(image)
@@ -62,33 +62,19 @@ class CUB200(VisionDataset):
 
 def get_cub200(
     path: str,
-    resize_value: int | None = None,
-    crop_value: int | None = None,
-    random_erase: float | None = None,
-    horizontal_flip: float | None = None,
-    is_precropped: bool = True,
+    train_transform: Compose,
+    test_transform: Compose,
 ) -> tuple[CUB200, CUB200]:
     """Constructs the CUB200-2011 dataset.
 
     Args:
         path (str): Path to the dataset.
-        resize_value (int | None): The size to resize the images to. Defaults to None.
-        crop_value (int | None): The size to crop the images to. Defaults to None.
-        random_erase (float | None): The probability of applying random erasing. Defaults to None.
-        horizontal_flip (float | None): The probability of applying horizontal flip. Defaults to None.
-        is_precropped (bool): Whether the images are pre-cropped. Defaults to True.
+        train_transform (Compose): Transformations to apply to the training set.
+        test_transform (Compose): Transformations to apply to the validation set.
 
     Returns:
         tuple[CUB200, CUB200]: Train and validation datasets.
     """
-
-    train_transform, test_transform = get_default_image_transforms(
-        resize_value=resize_value,
-        crop_value=crop_value,
-        random_erase=random_erase,
-        horizontal_flip=horizontal_flip,
-        is_precropped=is_precropped,
-    )
 
     train_dataset = CUB200(
         root=path,

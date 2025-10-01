@@ -79,7 +79,7 @@ def prepare_codebook_training(
     logger.info(f"Device: {device}")
     model = construct_model(cfg, device)
 
-    train_ds, val_ds = get_dataset(cfg)
+    train_ds, val_ds = get_dataset(cfg.dataset)
     train_dataloader, val_dataloader = get_dataloaders(
         train_dl_config=cfg.train_dataloader,
         val_dl_config=cfg.val_dataloader,

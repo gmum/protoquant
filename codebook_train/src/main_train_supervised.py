@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 import torch
 import torch.nn as nn
+from src.datasets.transforms import get_default_image_transforms, get_deit_transforms
 from src.models.codebook_wrappers import create_codebook_wrapper
 from src.construct_model import construct_model
 from src.datasets.construct_dataset import get_dataloaders, get_dataset
@@ -12,16 +13,17 @@ from src.utils import (
     save_checkpoint,
     create_optimizers,
     create_feature_dataloader,
+    SchedulerArgs
 )
 from src.training import (
     train_epoch_cosine_codebook,
     validate_epoch_cosine_codebook,
     validate_epoch,
 )
+from timm.data.mixup import Mixup
 import logging
 import hydra
 from src.config.main_config import MainConfig
-from torchvision.transforms import v2 as transforms_v2
 from src.distributed_utils import create_samplers
 
 
@@ -43,7 +45,23 @@ def prepare_codebook_training(
     logger.info(f"Device: {device}")
     model = construct_model(cfg, device)
 
-    train_ds, val_ds = get_dataset(cfg)
+    if cfg.dataset.use_deit_transforms:
+        train_transform, val_transform = get_deit_transforms()
+    else:
+        train_transform, val_transform = get_default_image_transforms(
+            autoaugment=cfg.dataset.autoaugment,
+            resize_value=224 if cfg.dataset.name == "cub200" else 256,
+            crop_value=None if cfg.dataset.name == "cub200" else 224,
+            random_erase=cfg.dataset.random_erase,
+            horizontal_flip=cfg.dataset.horizontal_flip,
+            is_precropped=cfg.dataset.name == "cub200",
+        )
+    train_ds, val_ds = get_dataset(
+        name=cfg.dataset.name,
+        train_transform=train_transform,
+        val_transform=val_transform,
+        path=cfg.dataset._path,
+    )
     train_sampler, val_sampler = create_samplers(
         train_ds,
         val_ds,
@@ -100,25 +118,35 @@ def prepare_codebook_training(
         broadcast_buffers=True,
     )
 
-    optimizers = create_optimizers(
+    optimizer = create_optimizers(
         model=model_with_codebook,
         codebook=codebook,
         cfg=cfg,
-    )
-    logger.info(f"Optimizers: {optimizers}")
+    )[0]
+    logger.info(f"Optimizer: {optimizer}")
 
-    schedulers = create_schedulers(
-        optimizers=optimizers,
-        epoch_iters=len(train_dataloader),
-        warmup_epochs=cfg.training.warmup_epochs,
+    scheduler_args = SchedulerArgs(
         epochs=cfg.epochs,
+        warmup_epochs=cfg.training.warmup_epochs,
+        lr=cfg.codebook_optimizer.lr
     )
-    logger.info(f"Schedulers: {schedulers}")
+    scheduler = create_schedulers(
+        optimizers=[optimizer],
+        scheduler_args=scheduler_args
+    )[0]
+    logger.info(f"Scheduler: {scheduler}")
 
-    cutmix = transforms_v2.CutMix(num_classes=cfg.dataset.num_classes)
-    mixup = transforms_v2.MixUp(num_classes=cfg.dataset.num_classes)
-    cutmix_or_mixup = transforms_v2.RandomChoice([cutmix, mixup])
-    criterion = nn.CrossEntropyLoss(label_smoothing=cfg.training.label_smoothing)
+    mixup_fn = Mixup(
+        mixup_alpha=0.8,
+        cutmix_alpha=1.0,
+        cutmix_minmax=None,
+        prob=1.0,
+        switch_prob=0.5,
+        mode='batch',
+        label_smoothing=cfg.training.label_smoothing,
+        num_classes=cfg.dataset.num_classes
+    )
+    criterion = nn.CrossEntropyLoss()
 
     if cfg.training.only_features:
         logger.info("Extracting features from the training dataset")
@@ -128,7 +156,7 @@ def prepare_codebook_training(
             train_dataloader=train_dataloader,
             val_dataloader=val_dataloader,
             device=device,
-            transforms=cutmix_or_mixup,
+            transforms=mixup_fn,
             local_rank=local_rank,
             cfg=cfg,
         )
@@ -156,10 +184,10 @@ def prepare_codebook_training(
         model=model_to_train,
         cfg=cfg,
         train_dataloader=train_dataloader,
-        train_transforms=cutmix_or_mixup,
+        train_transforms=mixup_fn,
         val_dataloader=val_dataloader,
-        optimizers=optimizers,
-        schedulers=schedulers,
+        optimizer=optimizer,
+        scheduler=scheduler,
         criterion=criterion,
         device=device,
         wandb_run=wandb_run,
@@ -174,8 +202,8 @@ def codebook_training(
     train_dataloader: torch.utils.data.DataLoader,
     train_transforms: torch.nn.Module,
     val_dataloader: torch.utils.data.DataLoader,
-    optimizers: list[torch.optim.Optimizer],
-    schedulers: list[torch.optim.lr_scheduler._LRScheduler],
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
     criterion: nn.Module,
     device: torch.device,
     local_rank: int,
@@ -200,8 +228,8 @@ def codebook_training(
             train_dataloader=train_dataloader,
             num_classes=cfg.dataset.num_classes,
             transforms=train_transforms,
-            optimizers=optimizers,
-            schedulers=schedulers,
+            optimizers=[optimizer],
+            schedulers=[],
             criterion=criterion,
             task_loss_weight=cfg.training.task_loss_weight,
             codebook_loss_weight=cfg.training.codebook_loss_weight,
@@ -220,6 +248,8 @@ def codebook_training(
         # add prefix Train and Validation to the statistics
         train_statistics = {f"Train {k}": v for k, v in train_statistics.items()}
         val_statistics = {f"Validation {k}": v for k, v in val_statistics.items()}
+        
+        scheduler.step(epoch)
 
         logger.info(f"Train statistics: {train_statistics}")
         logger.info(f"Validation statistics: {val_statistics}")
@@ -228,6 +258,11 @@ def codebook_training(
             wandb_run.log({"epoch": epoch})
             wandb_run.log(train_statistics)
             wandb_run.log(val_statistics)
+            wandb_run.log(
+                {
+                    "lr": optimizer.param_groups[0]["lr"],
+                }
+            )
 
         accuracy = val_statistics["Validation Top1 Accuracy"]
         if local_rank == 0 and checkpoint_tracker.is_best(accuracy):

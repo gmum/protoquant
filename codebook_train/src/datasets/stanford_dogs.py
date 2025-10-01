@@ -8,7 +8,7 @@ import torch
 import torch.utils.data as data
 from torchvision.datasets.utils import download_url, list_dir
 from src.datasets.transforms import get_default_image_transforms
-
+from torchvision.transforms.v2 import Compose
 
 class StanfordDogs(data.Dataset):
     """`Stanford Dogs <http://vision.stanford.edu/aditya86/ImageNetDogs/>`_ Dataset.
@@ -284,32 +284,20 @@ class StanfordDogs(data.Dataset):
 
 def get_stanford_dogs(
     path: str,
-    resize_value: int | None = None,
-    crop_value: int | None = None,
-    random_erase: float | None = None,
-    horizontal_flip: float | None = None,
-    is_precropped: bool = False,
+    train_transform: Compose,
+    test_transform: Compose,
 ) -> tuple[StanfordDogs, StanfordDogs]:
     """Constructs the Flowers102 dataset.
 
     Args:
         path (str): Path to the dataset.
-        resize_value (int | None): The size to resize the images to. Defaults to None.
-        crop_value (int | None): The size to crop the images to. Defaults to None.
-        random_erase (float | None): The probability of applying random erasing. Defaults to None.
-        horizontal_flip (float | None): The probability of applying horizontal flip. Defaults to None.
-        is_precropped (bool): Whether the images are pre-cropped. Defaults to False.
+        train_transform (Compose): Transformations to apply to the training set.
+        test_transform (Compose): Transformations to apply to the validation set.
 
     Returns:
         tuple[Flowers102, Flowers102]: Train and validation datasets.
     """
-    train_transform, test_transform = get_default_image_transforms(
-        resize_value=resize_value,
-        crop_value=crop_value,
-        random_erase=random_erase,
-        horizontal_flip=horizontal_flip,
-        is_precropped=is_precropped,
-    )
+ 
 
     train_dataset = StanfordDogs(
         root=path, train=True, transform=train_transform, download=True

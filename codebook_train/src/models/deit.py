@@ -6,7 +6,7 @@ from functools import partial
 
 from timm.models.vision_transformer import VisionTransformer, _cfg
 from src.models_registry import register_model
-from timm.models.layers import trunc_normal_
+from timm.layers import trunc_normal_
 
 
 __all__ = [

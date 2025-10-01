@@ -20,7 +20,9 @@ class AdamOptimizerConfig(BaseOptimizerConfig):
 @dataclass
 class AdamWOptimizerConfig(BaseOptimizerConfig):
     _target_: str = f"{AdamW.__module__}.{AdamW.__qualname__}"
-    weight_decay: float = 0.0
+    weight_decay: float = 0.005
+    betas: tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
 
 
 @dataclass

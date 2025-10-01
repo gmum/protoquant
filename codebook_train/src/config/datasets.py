@@ -6,17 +6,28 @@ from omegaconf import MISSING
 
 
 @dataclass
+class DataloaderConfig:
+    batch_size: int = 32
+    num_workers: int = 2
+    pin_memory: bool = True
+    drop_last: bool = True
+
+
+@dataclass
 class BaseDatasetConfig:
     name: str = MISSING
     _path: str = MISSING
     num_classes: int = MISSING
-    
+
     # default ones (imagenet)
     resize_size: int | None = 256
-    crop_size: int | None = 224 # if precropped set to None
+    crop_size: int | None = 224  # if precropped set to None
     random_erase: float | None = 0.1
     horizontal_flip: float | None = 0.5
     is_precropped: bool = False
+    autoaugment: bool = False
+    
+    use_deit_transforms: bool = True
 
 
 @dataclass

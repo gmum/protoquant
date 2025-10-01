@@ -26,7 +26,7 @@ def start_training(cfg: MainConfig) -> None:
 
     main_logger.info(OmegaConf.to_yaml(cfg))
     hydra_output_dir = Path(
-        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir  # type: ignore
     )
     main_logger.info(f"Hydra output directory: {hydra_output_dir}")
 
@@ -34,7 +34,7 @@ def start_training(cfg: MainConfig) -> None:
         f"Starting distributed training with {cfg.distributed.world_size} processes (GPU's) using {cfg.distributed.backend} backend."
     )
 
-    torch.multiprocessing.spawn(
+    torch.multiprocessing.spawn(  # type: ignore
         fn=distributed_worker,
         args=(cfg, hydra_output_dir),
         nprocs=cfg.distributed.world_size,
@@ -56,7 +56,7 @@ def distributed_worker(rank: int, cfg: MainConfig, hydra_output_dir: Path) -> No
     if rank == 0 and cfg.wandb.is_enabled:
         wandb_run = wandb.init(
             project=cfg.wandb.project,
-            config=OmegaConf.to_container(cfg),
+            config=OmegaConf.to_container(cfg),  # type: ignore
             entity=cfg.wandb.entity,
             group=cfg.wandb.group,
             job_type=cfg.wandb.job_type,

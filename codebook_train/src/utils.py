@@ -13,9 +13,12 @@ import hydra
 from src.config.codebook_init import BaseInitializationConfig
 from omegaconf import OmegaConf
 import functools
+import uuid
+from timm.scheduler import create_scheduler
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
-
+UNIQUE_ID = uuid.uuid4().hex[:8]
 
 def set_reproducibility(seed: int) -> None:
     """Set the seed for reproducibility and deterministic behavior
@@ -67,59 +70,44 @@ def create_optimizers(
     return optimizers
 
 
+@dataclass
+class SchedulerArgs:
+    """Configuration for creating a timm scheduler."""
+    sched: str = 'cosine'
+    epochs: int = 100            # Fewer epochs are needed for fine-tuning
+    lr: float = 5e-5             # Lower learning rate is crucial
+    warmup_epochs: int = 5       # Standard value
+    cooldown_epochs: int = 10    # Standard value
+    min_lr: float = 1e-6         # The floor for the learning rate
+    warmup_lr: float = 1e-6      # The learning rate to start the warmup from
+
+
 def create_schedulers(
     optimizers: list[torch.optim.Optimizer],
-    epoch_iters: int,
-    warmup_epochs: int,
-    epochs: int,
+    scheduler_args: SchedulerArgs
 ) -> list[torch.optim.lr_scheduler._LRScheduler]:
-    """Create schedulers for the optimizers
+    """
+    Creates a DeiT-like learning rate scheduler using a configuration object.
 
     Args:
-        optimizers (list[torch.optim.Optimizer]): List of optimizers
-        epoch_iters (int): Number of iterations per epoch
-        warmup_epochs (int): Number of warmup epochs
-        epochs (int): Total number of epochs
+        optimizers (list[torch.optim.Optimizer]): The list of optimizers to wrap.
+        scheduler_args (SchedulerArgs): The configuration object with all scheduler settings.
 
     Returns:
-        list[torch.optim.lr_scheduler._LRScheduler]: List of schedulers
+        list[torch.optim.lr_scheduler._LRScheduler]: A list containing the configured scheduler.
     """
+    if not optimizers:
+        return []
 
-    schedulers: list[torch.optim.lr_scheduler._LRScheduler] = []
-    total_iterations = epoch_iters * epochs
-    logger.info(f"Total iterations: {total_iterations}")
+    # The timm factory function can take the dataclass instance directly.
+    lr_scheduler, _ = create_scheduler(scheduler_args, optimizers[0])
 
-    linear_scheduler_iters = warmup_epochs * epoch_iters
-    linear_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizers[0],
-        start_factor=0.1,
-        end_factor=1.0,
-        total_iters=linear_scheduler_iters,
-    )
-
-    cosine_cycles = 3
-    remaining_iterations = total_iterations - linear_scheduler_iters
-    initial_cycle_length = remaining_iterations // (2**cosine_cycles - 1)
-
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizers[0],
-        T_0=initial_cycle_length,
-        T_mult=2,
-        eta_min=0.000001,
-    )
-    sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizers[0],
-        schedulers=[linear_scheduler, cosine_scheduler],
-        milestones=[linear_scheduler_iters],
-    )
-
-    schedulers.append(sequential_scheduler)
-    logger.info(f"Warmup iterations: {linear_scheduler_iters}")
     logger.info(
-        f"Cosine iterations: {[initial_cycle_length * 2**i for i in range(1, cosine_cycles + 1)]}"
+        f"Created '{scheduler_args.sched}' scheduler with {scheduler_args.warmup_epochs} warmup epochs "
+        f"and {scheduler_args.cooldown_epochs} cooldown epochs."
     )
 
-    return schedulers
+    return [lr_scheduler]
 
 
 def calculate_accuracy(output: torch.Tensor, target: torch.Tensor) -> float:
@@ -291,10 +279,10 @@ def save_checkpoint(
         raise ValueError("Model does not have a codebook attribute")
 
     # Save model
-    model_path = hydra_path / f"model_{name}.pth"
+    model_path = hydra_path / f"model_{name}_{UNIQUE_ID}.pth"
 
     # Save codebook
-    codebook_path = hydra_path / f"codebook_{name}.pth"
+    codebook_path = hydra_path / f"codebook_{name}_{UNIQUE_ID}.pth"
     logger.info(f"Saving codebook to {codebook_path}")
     torch.save(codebook.state_dict(), codebook_path)
 

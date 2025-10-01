@@ -175,7 +175,6 @@ class VisionTransformerAdapter(ModelAdapter):
         return unfreezable[:num_layers]
 
 
-
 def guess_adapter(model: nn.Module) -> ModelAdapter:
     """
     Guess the appropriate model adapter based on the model.
@@ -186,7 +185,7 @@ def guess_adapter(model: nn.Module) -> ModelAdapter:
     Returns:
         ModelAdapter: The appropriate model adapter.
     """
-    
+
     if hasattr(model, "features") and hasattr(model, "classifier"):
         return ConvNextAdapter()
 
@@ -195,8 +194,10 @@ def guess_adapter(model: nn.Module) -> ModelAdapter:
 
     if hasattr(model, "fc") and hasattr(model, "conv1"):
         return ResNetAdapter()
-    
+
     if hasattr(model, "classifier") and hasattr(model, "conv1"):
         return INaturalistResNetAdapter()
 
-    raise ValueError(f"Can't guess the adapter for the model: {model.__class__.__name__}")
+    raise ValueError(
+        f"Can't guess the adapter for the model: {model.__class__.__name__}"
+    )

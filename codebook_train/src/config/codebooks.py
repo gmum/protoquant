@@ -22,6 +22,7 @@ class CosineSimilarityCodebookConfig(BaseCodebookConfig):
         f"{CosineSimilarityCodebook.__module__}.{CosineSimilarityCodebook.__qualname__}"
     )
 
+
 @dataclass
 class DimReductionWrapperConfig(BaseCodebookConfig):
     _target_: str = (

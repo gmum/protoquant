@@ -1,3 +1,4 @@
+from src.config.datasets import BaseDatasetConfig
 from src.config.main_config import DataloaderConfig, MainConfig
 from src.datasets.imagenet import get_imagenet1k
 from src.datasets.cub import get_cub200
@@ -9,60 +10,44 @@ from src.datasets.flowers102 import get_flowers102
 from torchvision.datasets import StanfordCars, Flowers102, ImageNet
 from src.datasets.cub import CUB200
 from src.datasets.stanford_dogs import StanfordDogs, get_stanford_dogs
+from torchvision.transforms.v2 import Compose
 
 AVAILABLE_DATASET = CUB200 | StanfordCars | Flowers102 | ImageNet | StanfordDogs
 
+DATASET_DICT = {
+    "cub200": get_cub200,
+    "imagenet1k": get_imagenet1k,
+    "stanford_cars": get_stanford_cars,
+    "flowers102": get_flowers102,
+    "stanford_dogs": get_stanford_dogs,
+}
 
 def get_dataset(
-    cfg: MainConfig,
+    name: str,
+    path: str, 
+    train_transform: Compose, 
+    val_transform: Compose,
 ) -> tuple[AVAILABLE_DATASET, AVAILABLE_DATASET]:
-    if cfg.dataset.name == "imagenet1k":
-        return get_imagenet1k(
-            path=cfg.dataset._path,
-            crop_value=cfg.dataset.crop_size,
-            resize_value=cfg.dataset.resize_size,
-            random_erase=cfg.dataset.random_erase,
-            horizontal_flip=cfg.dataset.horizontal_flip,
-            is_precropped=cfg.dataset.is_precropped,
-        )
-    elif cfg.dataset.name == "cub200":
-        return get_cub200(
-            path=cfg.dataset._path,
-            crop_value=cfg.dataset.crop_size,
-            resize_value=cfg.dataset.resize_size,
-            random_erase=cfg.dataset.random_erase,
-            horizontal_flip=cfg.dataset.horizontal_flip,
-            is_precropped=cfg.dataset.is_precropped,
-        )
-    elif cfg.dataset.name == "stanford_cars":
-        return get_stanford_cars(
-            path=cfg.dataset._path,
-            crop_value=cfg.dataset.crop_size,
-            resize_value=cfg.dataset.resize_size,
-            random_erase=cfg.dataset.random_erase,
-            horizontal_flip=cfg.dataset.horizontal_flip,
-            is_precropped=cfg.dataset.is_precropped,
-        )
-    elif cfg.dataset.name == "flowers102":
-        return get_flowers102(
-            path=cfg.dataset._path,
-            crop_value=cfg.dataset.crop_size,
-            resize_value=cfg.dataset.resize_size,
-            random_erase=cfg.dataset.random_erase,
-            horizontal_flip=cfg.dataset.horizontal_flip,
-            is_precropped=cfg.dataset.is_precropped,
-        )
-    elif cfg.dataset.name == "stanford_dogs":
-        return get_stanford_dogs(
-            path=cfg.dataset._path,
-            crop_value=cfg.dataset.crop_size,
-            resize_value=cfg.dataset.resize_size,
-            random_erase=cfg.dataset.random_erase,
-            horizontal_flip=cfg.dataset.horizontal_flip,
-            is_precropped=cfg.dataset.is_precropped,
-        )
-    else:
-        raise ValueError(f"Unknown dataset: {cfg.dataset}")
+    """Constructs the training and validation datasets based on the provided configuration.
+
+    Args:
+        name (str): Name of the dataset to be used.
+        path (str): Path to the dataset.
+        train_transform (Compose): Transformations to be applied to the training dataset.
+        val_transform (Compose): Transformations to be applied to the validation dataset.
+
+    Raises:
+        ValueError: If the specified dataset name is not supported.
+
+    Returns:
+        tuple[AVAILABLE_DATASET, AVAILABLE_DATASET]: Returns the training and validation datasets.
+    """
+    if name not in DATASET_DICT:
+        raise ValueError(f"Dataset {name} is not supported. Available datasets: {list(DATASET_DICT.keys())}")
+
+    train_dataset, val_dataset = DATASET_DICT[name](path, train_transform, val_transform)
+
+    return train_dataset, val_dataset
 
 
 def get_dataloaders(

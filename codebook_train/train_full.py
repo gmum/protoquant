@@ -8,7 +8,15 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import models
-import torchvision.transforms.v2 as transforms_v2
+from src.datasets.transforms import get_deit_transforms, get_default_image_transforms
+from src.datasets.construct_dataset import get_dataset
+from timm.data.mixup import Mixup
+from timm.utils.model_ema import ModelEmaV3
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 
 # Import utility functions from utils.py
@@ -44,6 +52,8 @@ NUM_CLASSES = {
     "stanford_dogs": 120,
 }
 
+WANDB_PROJECT="full-training"
+WANDB_ENTITY="bubuss"
 
 # ======================================================================================
 # 2. Main Training Script
@@ -58,30 +68,43 @@ def main(args):
     checkpoint_tracker = utils.CheckpointTracker()
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.wandb:
+        if wandb is None:
+            raise ImportError("wandb is not installed. Install with: pip install wandb")
+        run_name = f"full_{args.dataset}_{args.model_name}_{timestamp}"
+        wandb_run = wandb.init(
+            project=WANDB_PROJECT,
+            entity=WANDB_ENTITY,
+            name=run_name,
+            config=vars(args),
+        )
+    else:
+        wandb_run = None
+
 
     logger.info(f"Loading '{args.dataset}' dataset...")
-    if args.dataset == "stanford_cars":
-        loader_fn = get_stanford_cars
-    elif args.dataset == "flowers102":
-        loader_fn = get_flowers102
-    elif args.dataset == "cub200":
-        loader_fn = get_cub200
-    elif args.dataset == "stanford_dogs":
-        loader_fn = get_stanford_dogs
-    else:
-        raise ValueError(f"Unsupported dataset: {args.dataset}")
-
     num_classes = NUM_CLASSES[args.dataset]
     logger.info(f"Number of classes: {num_classes}")
-
-    train_dataset, val_dataset = loader_fn(
-        path=args.data_path,
-        resize_value=224 if args.dataset == "cub200" else 256,
-        crop_value=None if args.dataset == "cub200" else 224,
-        random_erase=0.1,
-        horizontal_flip=0.5,
-        is_precropped=args.dataset == "cub200",
+    
+    if "deit" in args.model_name:
+        train_transform, val_transform = get_deit_transforms()
+    else:
+        train_transform, val_transform = get_default_image_transforms(
+            autoaugment=args.autoaugment,
+            resize_value=224 if args.dataset == "cub200" else 256,
+            crop_value=None if args.dataset == "cub200" else 224,
+            random_erase=0.1,
+            horizontal_flip=0.5,
+            is_precropped=args.dataset == "cub200",
+        )
+            
+    train_dataset, val_dataset = get_dataset(
+        name=args.dataset, 
+        path=args.data_path, 
+        train_transform=train_transform, 
+        val_transform=val_transform
     )
+
     logger.info(f"Dataset loaded. Found {num_classes} classes.")
 
     train_loader = DataLoader(
@@ -116,29 +139,40 @@ def main(args):
         model.fc = nn.Linear(model.fc.in_features, num_classes)
     elif args.model_name == "deit_small_patch16_224":
         model = deit_small_patch16_224(pretrained=True)
-        model.head = nn.Linear(model.head.in_features, num_classes)
+        model.reset_classifier(num_classes=num_classes, global_pool="avg")
     else:
         raise ValueError(f"Unsupported model: {args.model_name}")
 
-    model = model.to(DEVICE)
+    model_ema = ModelEmaV3(model, decay=0.99996, device=DEVICE)
+    model = model_ema.to(DEVICE)
     logger.info(f"Model: {model}")
 
     # for param in model.features.parameters():
     # param.requires_grad = False
 
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.05, eps=1e-8, betas=(0.9, 0.999))
+    scheduler_args = utils.SchedulerArgs(
+        epochs=args.num_epochs,
+        warmup_epochs=args.warmup_epochs,
+        lr=args.learning_rate
+    )
     scheduler = utils.create_schedulers(
         optimizers=[optimizer],
-        epoch_iters=len(train_loader),
-        warmup_epochs=args.warmup_epochs,
-        epochs=args.num_epochs,
+        scheduler_args=scheduler_args
     )[0]
 
     # --- Define Loss, Optimizer, and Transforms for training loop ---
     criterion = nn.CrossEntropyLoss()
-    cutmix = transforms_v2.CutMix(num_classes=num_classes)
-    mixup = transforms_v2.MixUp(num_classes=num_classes)
-    cutmix_or_mixup = transforms_v2.RandomChoice([cutmix, mixup])
+    mixup_fn = Mixup(
+        mixup_alpha=0.8,
+        cutmix_alpha=1.0,
+        cutmix_minmax=None,
+        prob=1.0,
+        switch_prob=0.5,
+        mode='batch',
+        label_smoothing=0.1,
+        num_classes=num_classes
+    )
 
     logger.info("\nStarting training...")
     # --- Training & Validation Loop using utils ---
@@ -148,11 +182,12 @@ def main(args):
         train_epoch(
             model=model,
             train_dataloader=train_loader,
-            transforms=cutmix_or_mixup,
+            transforms=mixup_fn, # type: ignore
             optimizers=[optimizer],
             criterion=criterion,
             device=DEVICE,
             wandb_run=None,
+            schedulers=None,
         )
 
         top1_acc, top5_acc = validate_epoch(
@@ -164,16 +199,36 @@ def main(args):
         )
 
         # --- Scheduler Step ---
-        scheduler.step()
+        current_lr = optimizer.param_groups[0]["lr"]
+        scheduler.step(epoch)
+        
+        if wandb_run:
+            wandb_run.log(
+                {
+                    "epoch": epoch + 1,
+                    "val_top1": top1_acc,
+                    "val_top5": top5_acc,
+                    "lr": current_lr,
+                }
+            )
 
         if checkpoint_tracker.is_best(top1_acc):
             logger.info(f"Saving the best checkpoint at epoch: {epoch + 1} with accuracy: {top1_acc:.2f}%")
-            logger.info(f"Timestamp of the checkpoint {timestamp}")
+            ckpt_path = (
+                args.checkpoint_path
+                / f"{args.dataset}_{args.model_name}_full_{timestamp}.pth"
+            )
+            logger.info(f"Timestamp of the checkpoint {timestamp}, path {ckpt_path}")
             torch.save(
                 model.state_dict(),
-                args.checkpoint_path
-                / f"{args.dataset}_{args.model_name}_full_{timestamp}.pth",
+                ckpt_path,
             )
+            
+    if wandb_run:
+        wandb_run.save(
+            ckpt_path,
+            policy="now",
+        )
 
     logger.info("Training finished.")
     logger.info(
@@ -240,6 +295,21 @@ if __name__ == "__main__":
         type=Path,
         default=Path("./checkpoints"),
         help="Path to save model checkpoints.",
+    )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Enable Weights & Biases logging.",
+    )
+    parser.add_argument(
+        "--autoaugment",
+        action="store_true",
+        help="Use AutoAugment instead of TrivialAugmentWide.",
+    )
+    parser.add_argument(
+        "--ema",
+        action="store_true",
+        help="Use Exponential Moving Average (EMA) for model weights.",
     )
 
     args = parser.parse_args()

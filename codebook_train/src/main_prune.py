@@ -1,4 +1,5 @@
 from pathlib import Path
+from src.datasets.transforms import get_default_image_transforms, get_deit_transforms
 from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
@@ -70,7 +71,24 @@ def prepare_codebook_pruning(
 
     model = construct_model(cfg, device)
 
-    train_ds, val_ds = get_dataset(cfg)
+    if cfg.dataset.use_deit_transforms:
+        train_transform, val_transform = get_deit_transforms()
+    else:
+        train_transform, val_transform = get_default_image_transforms(
+            autoaugment=cfg.dataset.autoaugment,
+            resize_value=224 if cfg.dataset.name == "cub200" else 256,
+            crop_value=None if cfg.dataset.name == "cub200" else 224,
+            random_erase=cfg.dataset.random_erase,
+            horizontal_flip=cfg.dataset.horizontal_flip,
+            is_precropped=cfg.dataset.name == "cub200",
+        )
+
+    train_ds, val_ds = get_dataset(
+        name=cfg.dataset.name,
+        train_transform=train_transform,
+        val_transform=val_transform,
+        path=cfg.dataset._path,
+    )
     _, val_dataloader = get_dataloaders(
         train_dataset=train_ds,
         val_dataset=val_ds,
@@ -106,6 +124,7 @@ def prepare_codebook_pruning(
         device=device,
         steps=cfg.steps,
         num_classes=cfg.dataset.num_classes,
+        wandb_run=wandb_run,
     )
 
     hydra_path = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
@@ -221,23 +240,10 @@ def prune_codebook_embeddings(codebook, codes_to_remove):
     # Update tracking buffers to the new size
     if hasattr(codebook, "code_usage"):
         new_code_usage = codebook.code_usage[codes_to_keep]
-        codebook.register_buffer(
-            "code_usage",
-            torch.zeros(
-                new_num_entries, dtype=torch.long, device=old_embeddings.device
-            ),
+        codebook.code_usage = torch.zeros(
+            new_num_entries, dtype=torch.long, device=old_embeddings.device
         )
         codebook.code_usage.copy_(new_code_usage)
-
-    if hasattr(codebook, "restarted_count"):
-        new_restarted_count = codebook.restarted_count[codes_to_keep]
-        codebook.register_buffer(
-            "restarted_count",
-            torch.zeros(
-                new_num_entries, dtype=torch.long, device=old_embeddings.device
-            ),
-        )
-        codebook.restarted_count.copy_(new_restarted_count)
 
     logger.info(
         f"Pruned codebook from {current_num_entries} to {new_num_entries} entries"

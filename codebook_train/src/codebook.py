@@ -45,23 +45,27 @@ class VectorQuantizeCodebook(nn.Module):
             B, N, D = input_shape
             x_flat = x.reshape(-1, D).contiguous()
         else:
-            raise ValueError(f"Unsupported input tensor rank: {input_ndim}. Must be 3 or 4.")
+            raise ValueError(
+                f"Unsupported input tensor rank: {input_ndim}. Must be 3 or 4."
+            )
 
         quantized_flat, code_indices, loss = self.quantizer(x_flat)
-        
+
         with torch.no_grad():
             if not self.training:
-                self.code_usage = self.code_usage.to(x_flat.device)
+                if self.code_usage.device != x_flat.device:
+                    self.code_usage = self.code_usage.to(x_flat.device)
+
                 self.code_usage.scatter_add_(
                     0,
                     code_indices.view(-1),
                     torch.ones_like(code_indices.view(-1), dtype=torch.long),
                 )
-        
+
         # Reshape the quantized tensor back to the original input shape
         if input_ndim == 4:
             quantized = quantized_flat.view(B, H, W, C).permute(0, 3, 1, 2).contiguous()
-        else: # input_ndim == 3
+        else:  # input_ndim == 3
             quantized = quantized_flat.view(B, N, D).contiguous()
 
         return quantized, loss
@@ -149,14 +153,18 @@ class CosineSimilarityCodebook(nn.Module):
             B, N, D = input_shape
             x_flat = x.reshape(-1, D).contiguous()
         else:
-            raise ValueError(f"Unsupported input tensor rank: {input_ndim}. Must be 3 or 4.")
+            raise ValueError(
+                f"Unsupported input tensor rank: {input_ndim}. Must be 3 or 4."
+            )
 
         with torch.no_grad():
             similarity = self.calculate_similarity(x_flat, self.embeddings.weight)
             code_indices = torch.argmax(similarity, dim=-1)
 
             if not self.training:
-                self.code_usage = self.code_usage.to(x_flat.device)
+                if self.code_usage.device != x_flat.device:
+                    self.code_usage = self.code_usage.to(x_flat.device)
+
                 self.code_usage.scatter_add_(
                     0,
                     code_indices.view(-1),
@@ -172,7 +180,7 @@ class CosineSimilarityCodebook(nn.Module):
         # Reshape the quantized tensor back to the original input shape
         if input_ndim == 4:
             quantized = quantized_flat.view(B, H, W, C).permute(0, 3, 1, 2).contiguous()
-        else: # input_ndim == 3
+        else:  # input_ndim == 3
             quantized = quantized_flat.view(B, N, D).contiguous()
 
         return quantized, commitment_loss
@@ -211,9 +219,7 @@ class DimReductionWrapper(nn.Module):
 
         in_block = LinearGELUNorm.construct_layers([input_dim] + in_block_config)
         self.in_block = nn.Sequential(*in_block)
-        self.codebook = CosineSimilarityCodebook(
-            num_entries, embedding_dim
-        )
+        self.codebook = CosineSimilarityCodebook(num_entries, embedding_dim)
 
         out_block = LinearGELUNorm.construct_layers([embedding_dim] + out_block_config)
         self.out_block = nn.Sequential(*out_block)
