@@ -12,6 +12,7 @@ import hydra
 import wandb
 from omegaconf import OmegaConf
 from timm.data.mixup import Mixup
+from timm.loss import SoftTargetCrossEntropy
 
 from src.config.pipnet_config import PipNetConfig
 from src.datasets.construct_dataset import get_dataset, get_dataloaders
@@ -22,6 +23,7 @@ from src.utils import (
     create_schedulers,
 )
 from src.training import train_epoch, validate_epoch
+from src.training import train_epoch_pipnet  # add specialized epoch function
 
 
 logger = logging.getLogger(__name__)
@@ -96,7 +98,7 @@ def prepare_and_train(
 
     # Data
     if cfg.dataset.use_deit_transforms:
-        train_transform, val_transform = get_deit_transforms()
+        train_transform, val_transform = get_deit_transforms(is_precropped=(cfg.dataset.name == "cub200"))
     else:
         train_transform, val_transform = get_default_image_transforms(
             autoaugment=cfg.dataset.autoaugment,
@@ -183,7 +185,7 @@ def prepare_and_train(
         label_smoothing=cfg.training.label_smoothing,
         num_classes=cfg.dataset.num_classes
     )
-    criterion = nn.CrossEntropyLoss()
+    criterion = SoftTargetCrossEntropy()
 
     # Train
     train_loop(
@@ -221,6 +223,9 @@ def train_loop(
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     best_ckpt_path = hydra_path / f"pipnet_{cfg.model.name}_{timestamp}_{run_uuid}.pth"
 
+    # Regularization weight from config (default 0.0 if absent)
+    reg_weight = cfg.training.pipnet_regularization_weight
+
     for epoch in range(cfg.epochs):
         logger.info(f"Epoch: {epoch}")
 
@@ -228,14 +233,16 @@ def train_loop(
         if hasattr(train_dataloader.sampler, "set_epoch"):
             train_dataloader.sampler.set_epoch(epoch)  # type: ignore[attr-defined]
 
-        train_epoch(
+        # Run one epoch with PIPNet regularization
+        train_epoch_pipnet(
             model=model,
             train_dataloader=train_dataloader,
             transforms=train_transforms,
-            optimizers=[optimizer],
+            optimizer=optimizer,
             criterion=criterion,
-            schedulers=[],
             device=device,
+            reg_weight=reg_weight,
+            wandb_run=wandb_run,
         )
 
         # Validation using existing helper (expects model(inputs) -> logits)
@@ -275,7 +282,7 @@ def save_pipnet_checkpoint(
         else model
     )
     payload = {
-        "model": base.state_dict(),
+        "model": base.model_to_wrap.state_dict(),
         "epoch": epoch,
         "val_top1": val_top1,
     }
@@ -284,4 +291,4 @@ def save_pipnet_checkpoint(
 
 
 if __name__ == "__main__":
-    start_training_pipnet()
+    start_training_pipnet()  # type: ignore

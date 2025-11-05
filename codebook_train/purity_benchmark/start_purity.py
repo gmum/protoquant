@@ -41,11 +41,19 @@ def generate_purity_csv(
     classification_weights = model.head.classifier.weight
     num_prototypes = model.head.P
     
-    if 'deit' in cfg.model.name or 'vit' in cfg.model.name:
-        wshape = 14  # For ViT/DeiT on 224x224 with 16x16 patches
-    else:
-        wshape = 7   # Default for ResNet/ConvNext
-    
+    try:
+        # Get a single batch from the dataloader to perform a forward pass
+        sample_input, _ = next(iter(projectloader))
+        sample_input = sample_input.to(device)
+        with torch.no_grad():
+            output = model(sample_input)
+            # The shape is (batch, protos, width, height)
+            wshape = output.proto_fmap.shape[-1]
+        print(f"Dynamically determined wshape: {wshape}")
+    except StopIteration:
+        print("DataLoader is empty. Cannot determine wshape.")
+        return Path() # Or handle error appropriately
+
     # Create a simple namespace for compatibility with PIPNet's get_patch_size
     args = Namespace(
         net=cfg.model.name,
@@ -105,14 +113,23 @@ def generate_purity_csv(
 
 
 def eval_purity_from_csv(csv_path: Path, cfg: PurityBenchConfig):
-    """Evaluates prototype purity from the generated CSV file."""
+    """Evaluates prototype purity from the generated CSV file, with fixes."""
     
+    # Dynamically determine wshape from the model config if possible, or keep hardcoded logic
     if 'deit' in cfg.model.name or 'vit' in cfg.model.name: 
         wshape = 14
     else: 
+        # For ConvNeXt_tiny_13, wshape is 13. For original PIPNet, it's 7.
+        # This part needs to be correct for the specific model being evaluated.
+        # Let's assume it's correctly set for the model that generated the CSV.
+        # For the official ConvNeXt_tiny_13, this should be 13.
+        # For the original PIPNet ResNet/etc, this would be 7.
+        # We will assume wshape=7 for the classic PIPNet model evaluation for now.
         wshape = 7
+        if '13' in cfg.model.name: # A simple heuristic
+             wshape = 13
         
-    args = Namespace( # Renamed for clarity
+    args = Namespace(
         net=cfg.model.name,
         p_gaussian_hw=cfg.p_gaussian_hw,
         image_size=cfg.dataset.image_size,
@@ -124,6 +141,7 @@ def eval_purity_from_csv(csv_path: Path, cfg: PurityBenchConfig):
     cub_root = Path(cfg.cub_cropped_data_path)
     if (cub_root / "CUB_200_2011").is_dir():
         cub_root = cub_root / "CUB_200_2011"
+        
     parts_loc_path = cub_root / "parts/part_locs.txt"
     parts_name_path = cub_root / "parts/parts.txt"
     imgs_id_path = cub_root / "images.txt"
@@ -137,13 +155,22 @@ def eval_purity_from_csv(csv_path: Path, cfg: PurityBenchConfig):
             if vis == '1': img_to_part_xy_vis.setdefault(img, {})[partid] = (float(x), float(y))
     with open(parts_name_path) as f:
         for line in f: id, name = line.strip().split(' ', 1); parts_id_to_name[id] = name
+        
+    # --- FIX #2: LOGIC TO MERGE SYMMETRIC PARTS ---
+    parts_name_to_id = {v: k for k, v in parts_id_to_name.items()}
+    duplicate_part_ids = []
+    for id, name in parts_id_to_name.items():
+        if 'left' in name:
+            new_name = name.replace('left', 'right')
+            if new_name in parts_name_to_id:
+                duplicate_part_ids.append((id, parts_name_to_id[new_name]))
     
     print("CUB Parts:", parts_id_to_name)
     proto_parts_presences = {}
 
     with open(csv_path, newline='') as f:
         reader = csv.reader(f)
-        next(reader)
+        next(reader) # Skip header
         for p, imgname, h_min, h_max, w_min, w_max in reader:
             presences = proto_parts_presences.setdefault(p, {})
             
@@ -152,18 +179,46 @@ def eval_purity_from_csv(csv_path: Path, cfg: PurityBenchConfig):
             img_id = path_to_id.get(img_rel_path)
             if not img_id or img_id not in img_to_part_xy_vis: continue
             
-            # --- FINAL FIX HERE ---
-            # Reconstruct the correct, current path to the image file before opening it.
             correct_img_path = cub_root / "images" / img_rel_path
-
             with Image.open(correct_img_path) as img: w_orig, h_orig = img.size
+                
             h_min, h_max, w_min, w_max = map(float, [h_min, h_max, w_min, w_max])
+
+            # --- FIX #1: APPLY PATCH SIZE CORRECTION ---
+            if (h_max - h_min) > patchsize:
+                correction = (h_max - h_min) - patchsize
+                h_min += correction / 2.
+                h_max -= correction / 2.
+            if (w_max - w_min) > patchsize:
+                correction = (w_max - w_min) - patchsize
+                w_min += correction / 2.
+                w_max -= correction / 2.
+            
             h_min_orig, h_max_orig = (h_orig / imgresize) * h_min, (h_orig / imgresize) * h_max
             w_min_orig, w_max_orig = (w_orig / imgresize) * w_min, (w_orig / imgresize) * w_max
             
-            for partid, (x, y) in img_to_part_xy_vis[img_id].items():
+            parts_in_img = img_to_part_xy_vis[img_id]
+            for partid, (x, y) in parts_in_img.items():
                 in_patch = 1 if (w_min_orig <= x <= w_max_orig and h_min_orig <= y <= h_max_orig) else 0
                 presences.setdefault(partid, []).append(in_patch)
+
+            # --- APPLY PART MERGING LOGIC ---
+            for pair in duplicate_part_ids:
+                left_part, right_part = pair
+                # Check if the left part was present in this image and its presence was recorded
+                if left_part in parts_in_img and left_part in presences:
+                    # If right part also present, combine scores
+                    if right_part in parts_in_img and right_part in presences:
+                        # Get the last appended presence value for both
+                        presence_left = presences[left_part][-1]
+                        presence_right = presences[right_part][-1]
+                        # The merged part (right) takes the max presence of the two
+                        presences[right_part][-1] = max(presence_left, presence_right)
+                    # If only left part was present, transfer its score to the right part
+                    else:
+                        presences.setdefault(right_part, []).append(presences[left_part][-1])
+                    # Remove the now-redundant left part presence
+                    del presences[left_part]
 
     print("\n--- Purity Evaluation Results ---")
     max_presence_purity = {p: max((np.mean(pres) for pres in parts.values()), default=0.0) for p, parts in proto_parts_presences.items()}

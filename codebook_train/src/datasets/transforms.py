@@ -4,6 +4,7 @@ from src.config.constants import IMAGENET1K_MEAN, IMAGENET1K_STD
 from timm.data.transforms_factory import create_transform
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from torchvision.transforms.v2 import Compose
+from typing import Any
 
 def get_default_image_transforms(
     resize_value: int | None = None,
@@ -77,41 +78,59 @@ def get_default_image_transforms(
     return train_transform, val_transform
 
 
-def get_deit_transforms() -> tuple[Compose, Compose]:
+def get_deit_transforms(is_precropped: bool = False) -> tuple[Any, Any]:
     """
-    Creates and returns the specific data augmentation pipelines
-    function used for training the DeiT (Data-efficient Image Transformer) model.
-
-    This function hardcodes the parameters from the official DeiT repository to
-    ensure faithful replication. It uses the `timm` library, as the original
-    implementation does.
-
-    Returns:
-        tuple[Compose, Compose]: A tuple containing:
-            - train_transform (Compose): The transformation pipeline for the training set.
-            - val_transform (Compose): The transformation pipeline for the validation set.
+    DeiT-style transforms via timm.create_transform.
+    If is_precropped is True (e.g., cropped CUB), keep eval crop_pct=1.0 to avoid 256->center-crop,
+    and make train behave like a deterministic resize to 224 without random resized crop.
     """
-    # --- 1. Training Transformations ---
-    # These are the default augmentation parameters from the DeiT repository's main.py
+    if is_precropped:
+        # Training: disable random resized crop by forcing full-area, 1:1 ratio
+        train_transform = create_transform(
+            input_size=224,
+            is_training=True,
+            color_jitter=0.3,
+            auto_augment='rand-m9-mstd0.5-inc1',
+            interpolation='bicubic',
+            re_prob=0.25,
+            re_mode='pixel',
+            re_count=1,
+            mean=IMAGENET_DEFAULT_MEAN,
+            std=IMAGENET_DEFAULT_STD,
+            scale=(1.0, 1.0),
+            ratio=(1.0, 1.0),
+        )
+        # Validation: direct resize to 224 via crop_pct=1.0
+        val_transform = create_transform(
+            input_size=224,
+            is_training=False,
+            interpolation='bicubic',
+            crop_pct=1.0,
+            mean=IMAGENET_DEFAULT_MEAN,
+            std=IMAGENET_DEFAULT_STD,
+        )
+        return train_transform, val_transform
+
+    # Default DeiT pipeline (non-cropped datasets)
     train_transform = create_transform(
         input_size=224,
         is_training=True,
         color_jitter=0.3,
-        auto_augment='rand-m9-mstd0.5-inc1',  # RandAugment
+        auto_augment='rand-m9-mstd0.5-inc1',
         interpolation='bicubic',
-        re_prob=0.25,  # Random Erasing probability
+        re_prob=0.25,
         re_mode='pixel',
         re_count=1,
+        mean=IMAGENET_DEFAULT_MEAN,
+        std=IMAGENET_DEFAULT_STD,
     )
 
-    # --- 2. Validation Transformations ---
-    # This logic mirrors the `build_transform` function in the DeiT repo for validation
-    val_transform = transforms_v2.Compose([
-        # The resize size is calculated as int(224 / 0.875), which equals 256
-        transforms_v2.Resize(256, interpolation=transforms_v2.InterpolationMode.BICUBIC),
-        transforms_v2.CenterCrop(224),
-        transforms_v2.ToTensor(),
-        transforms_v2.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
-    ])
+    val_transform = create_transform(
+        input_size=224,
+        is_training=False,
+        interpolation='bicubic',  # default crop_pct=0.875 -> 256->center-crop 224
+        mean=IMAGENET_DEFAULT_MEAN,
+        std=IMAGENET_DEFAULT_STD,
+    )
 
     return train_transform, val_transform

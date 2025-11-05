@@ -80,6 +80,7 @@ class SchedulerArgs:
     cooldown_epochs: int = 10    # Standard value
     min_lr: float = 1e-6         # The floor for the learning rate
     warmup_lr: float = 1e-6      # The learning rate to start the warmup from
+    t_in_epochs: bool = True     # Step per-epoch via scheduler.step(epoch)
 
 
 def create_schedulers(
@@ -255,6 +256,7 @@ def save_checkpoint(
     name: str,
     hydra_path: Path,
     wandb_run=None,
+    save_wandb: bool = False,
 ) -> bool:
     """Save model and codebook checkpoint
 
@@ -288,18 +290,6 @@ def save_checkpoint(
 
     # Save to wandb if available
     if wandb_run:
-        wandb_run.save(
-            str(model_path),
-            base_path=hydra_path,
-            policy="now",
-        )
-
-        wandb_run.save(
-            str(codebook_path),
-            base_path=hydra_path,
-            policy="now",
-        )
-
         # Log checkpoint info
         wandb_run.log(
             {
@@ -307,6 +297,19 @@ def save_checkpoint(
                 "Checkpoint_Epoch": epoch,
             }
         )
+
+        if save_wandb:
+            wandb_run.save(
+                str(model_path),
+                base_path=hydra_path,
+                policy="now",
+            )
+
+            wandb_run.save(
+                str(codebook_path),
+                base_path=hydra_path,
+                policy="now",
+            )
 
     logger.info(
         f"Checkpoint saved. Validation accuracy: {val_accuracy:.2f}% at epoch {epoch}"

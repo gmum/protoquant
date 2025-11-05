@@ -72,7 +72,8 @@ def prepare_codebook_pruning(
     model = construct_model(cfg, device)
 
     if cfg.dataset.use_deit_transforms:
-        train_transform, val_transform = get_deit_transforms()
+        train_transform, val_transform = get_deit_transforms(is_precropped=cfg.dataset.name == "cub200")
+        logger.info(f"Using DeiT transforms. Precropped: {cfg.dataset.name == 'cub200'}")
     else:
         train_transform, val_transform = get_default_image_transforms(
             autoaugment=cfg.dataset.autoaugment,
@@ -82,6 +83,7 @@ def prepare_codebook_pruning(
             horizontal_flip=cfg.dataset.horizontal_flip,
             is_precropped=cfg.dataset.name == "cub200",
         )
+        logger.info(f"Using default transforms. Precropped: {cfg.dataset.name == 'cub200'}")
 
     train_ds, val_ds = get_dataset(
         name=cfg.dataset.name,

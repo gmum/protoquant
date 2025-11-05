@@ -33,10 +33,14 @@ class TrainingWrapper(torch.nn.Module):
     def __init__(self, model_to_wrap):
         super().__init__()
         self.model_to_wrap = model_to_wrap
+        self._last_proto_fvec = None
     
     # This forward pass calls the underlying model and returns only the logits
     def forward(self, x):
-        return self.model_to_wrap(x).logits
+        out = self.model_to_wrap(x)
+        # Cache proto vector for auxiliary regularization during training
+        self._last_proto_fvec = out.proto_fvec
+        return out.logits
 
 
 def _load_pipnet_from_checkpoint(
@@ -56,6 +60,15 @@ def _load_pipnet_from_checkpoint(
     if "model" not in ckpt:
         raise ValueError("Checkpoint is missing the 'model' state_dict key.")
     model_state_dict = ckpt["model"]
+    
+    prefix = "model_to_wrap."
+    if any(k.startswith(prefix) for k in model_state_dict.keys()):
+        logger.info(f"Stripping '{prefix}' prefix from state_dict keys.")
+        model_state_dict = {
+            k[len(prefix):]: v 
+            for k, v in model_state_dict.items() 
+            if k.startswith(prefix)
+        }
 
     # Extract codebook from the loaded state_dict to reconstruct the head
     if "head.codebook" not in model_state_dict:

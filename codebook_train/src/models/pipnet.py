@@ -96,7 +96,7 @@ class QuantizedPIPNetHead(nn.Module):
         return PIPNetOutput(
             proto_fmap=sim_map, # The crucial (B, P, H, W) similarity map
             proto_fvec=pooled_scores, # The (B, P) pooled similarity vector
-            logits=logits
+            logits=logits # The (B, K) final class logits
         )
 
 
@@ -163,3 +163,57 @@ class QuantizedPIPNetHead(nn.Module):
 
     def pre_softmax_norm(self, x: Tensor) -> Tensor:
         return torch.log1p(x)  # ** self.multiplier)
+    
+    def regularization_penalty(self, proto_fvec: Tensor, targets: Tensor, reduction: str = "mean") -> Tensor:
+        """
+        Robust PIPNet regularizer: log(1 + (p * w)^2), where p are pooled
+        prototype activations and w are class-specific prototype weights.
+        By default returns the mean over batch and prototypes to keep the
+        magnitude independent of batch size and P.
+        """
+        W = torch.relu(self.classifier.weight)  # (K, P)
+        if targets.dtype in (torch.long, torch.int64) and targets.dim() == 1:
+            W_y = W[targets]  # (B, P)
+        else:
+            W_y = targets @ W  # (B, K) @ (K, P) -> (B, P)
+        prod = proto_fvec * W_y  # (B, P)
+        penalty = torch.log1p(prod.pow(2))  # log((p*w)^2 + 1)
+        if reduction == "sum":
+            return penalty.sum()
+        return penalty.mean()
+
+    def calculate_local_size(self, threshold: float = 0.1) -> torch.Tensor:
+        """
+        Calculates the "local size" for each class based on the classifier's weights.
+
+        As described, the local size is the number of prototypes that have a weight
+        greater than a given threshold for a specific class. This indicates how
+        many prototypes are considered "significant" for that class.
+
+        Args:
+            threshold (float): The value above which a prototype's weight is
+                               counted towards the local size. Defaults to 0.1.
+
+        Returns:
+            torch.Tensor: A 1D tensor of shape (num_classes,) where each element
+                          is the local size (an integer count) for the corresponding class.
+        """
+        # The 'head matrix' are the weights of the final linear classifier.
+        # Shape: (num_classes, num_prototypes)
+        head_matrix = self.classifier.weight.detach()
+
+        # The logic uses the weights after the ReLU activation, which ensures
+        # they are non-negative. This represents the "score" or contribution
+        # of each prototype to each class.
+        positive_weights = torch.relu(head_matrix)
+
+        # Create a boolean mask where weights are greater than the threshold.
+        # Shape: (num_classes, num_prototypes)
+        is_significant = positive_weights > threshold
+
+        # Sum the boolean values (True=1, False=0) along the prototype dimension (dim=1)
+        # to get the count for each class.
+        # The result is a tensor of shape (num_classes,).
+        local_sizes = torch.sum(is_significant, dim=1)
+
+        return local_sizes

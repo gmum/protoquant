@@ -11,7 +11,7 @@ from torchvision import models
 from src.datasets.transforms import get_deit_transforms, get_default_image_transforms
 from src.datasets.construct_dataset import get_dataset
 from timm.data.mixup import Mixup
-from timm.utils.model_ema import ModelEmaV3
+from timm.loss import SoftTargetCrossEntropy
 
 try:
     import wandb
@@ -86,8 +86,9 @@ def main(args):
     num_classes = NUM_CLASSES[args.dataset]
     logger.info(f"Number of classes: {num_classes}")
     
-    if "deit" in args.model_name:
-        train_transform, val_transform = get_deit_transforms()
+    if args.transforms == "deit":
+        train_transform, val_transform = get_deit_transforms(is_precropped=(args.dataset == "cub200"))
+        logger.info("Using Deit image transforms.")
     else:
         train_transform, val_transform = get_default_image_transforms(
             autoaugment=args.autoaugment,
@@ -97,6 +98,7 @@ def main(args):
             horizontal_flip=0.5,
             is_precropped=args.dataset == "cub200",
         )
+        logger.info("Using default image transforms.")
             
     train_dataset, val_dataset = get_dataset(
         name=args.dataset, 
@@ -139,18 +141,18 @@ def main(args):
         model.fc = nn.Linear(model.fc.in_features, num_classes)
     elif args.model_name == "deit_small_patch16_224":
         model = deit_small_patch16_224(pretrained=True)
-        model.reset_classifier(num_classes=num_classes, global_pool="avg")
+        global_pool = "avg"
+        model.reset_classifier(num_classes=num_classes, global_pool=global_pool)
+        logger.info(f"Global pool set to {global_pool} for Deit model.")
     else:
         raise ValueError(f"Unsupported model: {args.model_name}")
 
-    model_ema = ModelEmaV3(model, decay=0.99996, device=DEVICE)
-    model = model_ema.to(DEVICE)
+    # Ensure the trainable model is on DEVICE
+    model = model.to(DEVICE)
     logger.info(f"Model: {model}")
 
-    # for param in model.features.parameters():
-    # param.requires_grad = False
-
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.05, eps=1e-8, betas=(0.9, 0.999))
+    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    logger.info(f"Optimizer: {optimizer}")
     scheduler_args = utils.SchedulerArgs(
         epochs=args.num_epochs,
         warmup_epochs=args.warmup_epochs,
@@ -162,19 +164,21 @@ def main(args):
     )[0]
 
     # --- Define Loss, Optimizer, and Transforms for training loop ---
-    criterion = nn.CrossEntropyLoss()
+    # Use softer augmentation for CUB and match loss to mixup soft targets
     mixup_fn = Mixup(
-        mixup_alpha=0.8,
-        cutmix_alpha=1.0,
+        mixup_alpha=args.mixup_alpha,
+        cutmix_alpha=args.cutmix_alpha,
         cutmix_minmax=None,
-        prob=1.0,
-        switch_prob=0.5,
+        prob=args.mixup_prob,
+        switch_prob=args.switch_prob,
         mode='batch',
-        label_smoothing=0.1,
+        label_smoothing=args.label_smoothing,
         num_classes=num_classes
     )
+    criterion = SoftTargetCrossEntropy()
 
     logger.info("\nStarting training...")
+    ckpt_path = None
     # --- Training & Validation Loop using utils ---
     for epoch in range(args.num_epochs):
         logger.info(f"--- Epoch {epoch + 1}/{args.num_epochs} ---")
@@ -186,10 +190,12 @@ def main(args):
             optimizers=[optimizer],
             criterion=criterion,
             device=DEVICE,
-            wandb_run=None,
-            schedulers=None,
+            wandb_run=wandb_run,
+            schedulers=[scheduler],
+            epoch=epoch,
         )
 
+        # Validate using raw model weights
         top1_acc, top5_acc = validate_epoch(
             model=model, val_dataloader=val_loader, device=DEVICE
         )
@@ -198,9 +204,9 @@ def main(args):
             f"Validation | Top-1 Accuracy: {top1_acc:.2f}% | Top-5 Accuracy: {top5_acc:.2f}%"
         )
 
-        # --- Scheduler Step ---
+        # --- Scheduler Step (per-epoch) ---
+        scheduler.step(epoch + 1)
         current_lr = optimizer.param_groups[0]["lr"]
-        scheduler.step(epoch)
         
         if wandb_run:
             wandb_run.log(
@@ -224,7 +230,7 @@ def main(args):
                 ckpt_path,
             )
             
-    if wandb_run:
+    if wandb_run and ckpt_path:
         wandb_run.save(
             ckpt_path,
             policy="now",
@@ -279,6 +285,12 @@ if __name__ == "__main__":
         help="Learning rate for the optimizer.",
     )
     parser.add_argument(
+        "--weight_decay",
+        type=float,
+        default=0.01,
+        help="Weight decay for the optimizer.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -307,10 +319,17 @@ if __name__ == "__main__":
         help="Use AutoAugment instead of TrivialAugmentWide.",
     )
     parser.add_argument(
-        "--ema",
-        action="store_true",
-        help="Use Exponential Moving Average (EMA) for model weights.",
+        "--transforms",
+        type=str,
+        choices=["deit", "default"],
+        default="default",
+        help="Which transforms pipeline to use.",
     )
+    parser.add_argument("--mixup_alpha", type=float, default=0.8, help="Mixup alpha.")
+    parser.add_argument("--cutmix_alpha", type=float, default=1.0, help="CutMix alpha.")
+    parser.add_argument("--mixup_prob", type=float, default=1.0, help="Probability of applying mixup/cutmix.")
+    parser.add_argument("--switch_prob", type=float, default=0.5, help="Switch probability between mixup and cutmix.")
+    parser.add_argument("--label_smoothing", type=float, default=0.1, help="Label smoothing for soft targets.")
 
     args = parser.parse_args()
     main(args)

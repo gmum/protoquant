@@ -259,6 +259,7 @@ def train_epoch(
     device: torch.device,
     schedulers: list[torch.optim.lr_scheduler._LRScheduler] | None = None,
     wandb_run=None,
+    epoch: int = 0,
 ) -> None:
     model.train()
 
@@ -275,10 +276,6 @@ def train_epoch(
 
         for optimizer in optimizers:
             optimizer.step()
-
-        if schedulers is not None:
-            for scheduler in schedulers:
-                scheduler.step()
 
         accuracy = (logits.argmax(1) == labels).float().mean()
 
@@ -401,3 +398,62 @@ def validate_epoch_ema_codebook(
     )
 
     return codebook_statistics
+
+
+def train_epoch_pipnet(
+    model: nn.Module,
+    train_dataloader: torch.utils.data.DataLoader,
+    transforms: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    reg_weight: float = 0.0,
+    wandb_run=None,
+) -> None:
+    """One training epoch for PIPNet head with auxiliary regularization.
+
+    Adds a penalty term: log(1 + (p * w)^2) where p are pooled proto activations and w
+    are the classifier weights for the (possibly soft) target labels.
+    """
+    model.train()
+    log_every = (len(train_dataloader) // 5) or 1
+
+    for i, (images, labels) in enumerate(train_dataloader):
+        images, labels = images.to(device), labels.to(device)
+        transformed_images, transformed_labels = transforms(images, labels)
+
+        optimizer.zero_grad()
+
+        logits = model(transformed_images)
+        ce_loss = criterion(logits, transformed_labels)
+
+        # Use hard labels (pre-mixup) for the regularizer for stability
+        reg_labels = labels
+
+        base = model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
+        proto_fvec = getattr(base, "_last_proto_fvec", None)
+        if proto_fvec is not None and hasattr(base, "model_to_wrap") and hasattr(base.model_to_wrap, "head") and hasattr(base.model_to_wrap.head, "regularization_penalty"):
+            reg_loss = base.model_to_wrap.head.regularization_penalty(proto_fvec, reg_labels)
+        else:
+            reg_loss = torch.tensor(0.0, device=device)
+
+        total_loss = ce_loss + reg_weight * reg_loss
+        total_loss.backward()
+        optimizer.step()
+
+        with torch.no_grad():
+            train_acc = (logits.argmax(1) == labels).float().mean()
+
+        if wandb_run:
+            wandb_run.log({
+                "Train Loss": float(total_loss.item()),
+                "Train CE Loss": float(ce_loss.item()),
+                "Train Reg Penalty": float(reg_loss.item()),
+                "Train Reg Loss (weighted)": float((reg_weight * reg_loss).item()),
+                "Train Accuracy": float(train_acc.item()),
+            })
+
+        if i % log_every == 0:
+            logger.info(
+                f"Iter {i}/{len(train_dataloader)} | Loss: {total_loss.item():.4f} | CE: {ce_loss.item():.4f} | Reg({reg_weight}): {reg_loss.item():.4f} | Acc: {train_acc.item():.4f}"
+            )

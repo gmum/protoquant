@@ -8,7 +8,7 @@ from omegaconf import MISSING
 @dataclass
 class DataloaderConfig:
     batch_size: int = 32
-    num_workers: int = 2
+    num_workers: int = 8
     pin_memory: bool = True
     drop_last: bool = True
 
@@ -27,7 +27,7 @@ class BaseDatasetConfig:
     is_precropped: bool = False
     autoaugment: bool = False
     
-    use_deit_transforms: bool = True
+    use_deit_transforms: bool = False
 
 
 @dataclass

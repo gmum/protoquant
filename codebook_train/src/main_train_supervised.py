@@ -21,6 +21,7 @@ from src.training import (
     validate_epoch,
 )
 from timm.data.mixup import Mixup
+from timm.loss import SoftTargetCrossEntropy
 import logging
 import hydra
 from src.config.main_config import MainConfig
@@ -146,7 +147,7 @@ def prepare_codebook_training(
         label_smoothing=cfg.training.label_smoothing,
         num_classes=cfg.dataset.num_classes
     )
-    criterion = nn.CrossEntropyLoss()
+    criterion = SoftTargetCrossEntropy()
 
     if cfg.training.only_features:
         logger.info("Extracting features from the training dataset")
