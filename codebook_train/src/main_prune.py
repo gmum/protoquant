@@ -16,6 +16,13 @@ import logging
 import hydra
 from src.config.pruning_config import PruningConfig
 import wandb
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*UnsupportedFieldAttributeWarning.*",
+    module="pydantic._internal._generate_schema",
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -41,6 +41,7 @@ class PurityBenchConfig:
     cub_cropped_data_path: str = MISSING
     
     csv_to_eval: Optional[str] = None  # If provided, skip CSV generation and just evaluate this file.
+    latent_wshape: Optional[int] = 7  # If provided, skip CSV generation and just evaluate this file.
     
     # --- Benchmark Settings with Sensible Defaults ---
     output_dir: str = "benchmark_results"
@@ -54,7 +55,6 @@ class PurityBenchConfig:
     model: MinimalModelConfig = field(default_factory=MinimalModelConfig)
     dataset: MinimalDatasetConfig = field(default_factory=MinimalDatasetConfig)
     training: MinimalTrainingConfig = field(default_factory=MinimalTrainingConfig)
-    
     # Internal fields used by the model builder function
     pipnet_checkpoint_path: Optional[str] = None
     codebook_path: Optional[str] = None

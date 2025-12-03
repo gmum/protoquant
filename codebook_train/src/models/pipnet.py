@@ -158,30 +158,6 @@ class QuantizedPIPNetHead(nn.Module):
     def pool(self, x: Tensor) -> Tensor:
         return self.pool_layer(x)
 
-    # def zero_out_irrelevant(self, x: Tensor) -> Tensor:
-    #    return torch.where(proto_fvec < 0.1, 0.0, proto_fvec)
-
-    def pre_softmax_norm(self, x: Tensor) -> Tensor:
-        return torch.log1p(x)  # ** self.multiplier)
-    
-    def regularization_penalty(self, proto_fvec: Tensor, targets: Tensor, reduction: str = "mean") -> Tensor:
-        """
-        Robust PIPNet regularizer: log(1 + (p * w)^2), where p are pooled
-        prototype activations and w are class-specific prototype weights.
-        By default returns the mean over batch and prototypes to keep the
-        magnitude independent of batch size and P.
-        """
-        W = torch.relu(self.classifier.weight)  # (K, P)
-        if targets.dtype in (torch.long, torch.int64) and targets.dim() == 1:
-            W_y = W[targets]  # (B, P)
-        else:
-            W_y = targets @ W  # (B, K) @ (K, P) -> (B, P)
-        prod = proto_fvec * W_y  # (B, P)
-        penalty = torch.log1p(prod.pow(2))  # log((p*w)^2 + 1)
-        if reduction == "sum":
-            return penalty.sum()
-        return penalty.mean()
-
     def calculate_local_size(self, threshold: float = 0.1) -> torch.Tensor:
         """
         Calculates the "local size" for each class based on the classifier's weights.

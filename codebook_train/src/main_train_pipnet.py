@@ -13,6 +13,8 @@ import wandb
 from omegaconf import OmegaConf
 from timm.data.mixup import Mixup
 from timm.loss import SoftTargetCrossEntropy
+from src.config.pipnet_config import PipNetConfig
+from src.construct_model import construct_model, get_backbone
 
 from src.config.pipnet_config import PipNetConfig
 from src.datasets.construct_dataset import get_dataset, get_dataloaders
@@ -22,7 +24,7 @@ from src.utils import (
     set_reproducibility,
     create_schedulers,
 )
-from src.training import train_epoch, validate_epoch
+from src.training import validate_epoch
 from src.training import train_epoch_pipnet  # add specialized epoch function
 
 
@@ -132,7 +134,18 @@ def prepare_and_train(
     )
 
     # Build model and head
-    model, head = build_pipnet_model(cfg, device)
+    base_model = construct_model(cfg, device)  # type: ignore
+    backbone = get_backbone(base_model)
+
+    # Freeze backbone (train head and optionally codebook only)
+    model, head = build_pipnet_model(
+        backbone=backbone, 
+        num_classes=cfg.dataset.num_classes, 
+        device=device, 
+        pipnet_checkpoint_path=cfg.pipnet_checkpoint_path,
+        codebook_path=cfg.codebook_path,
+        train_codebook=cfg.training.train_codebook
+    )
     model = TrainingWrapper(model)
     
     # log the size of the codebook
@@ -223,9 +236,6 @@ def train_loop(
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     best_ckpt_path = hydra_path / f"pipnet_{cfg.model.name}_{timestamp}_{run_uuid}.pth"
 
-    # Regularization weight from config (default 0.0 if absent)
-    reg_weight = cfg.training.pipnet_regularization_weight
-
     for epoch in range(cfg.epochs):
         logger.info(f"Epoch: {epoch}")
 
@@ -233,7 +243,7 @@ def train_loop(
         if hasattr(train_dataloader.sampler, "set_epoch"):
             train_dataloader.sampler.set_epoch(epoch)  # type: ignore[attr-defined]
 
-        # Run one epoch with PIPNet regularization
+        # Run one epoch
         train_epoch_pipnet(
             model=model,
             train_dataloader=train_dataloader,
@@ -241,7 +251,6 @@ def train_loop(
             optimizer=optimizer,
             criterion=criterion,
             device=device,
-            reg_weight=reg_weight,
             wandb_run=wandb_run,
         )
 

@@ -34,7 +34,6 @@ class TrainingConfig:
     enable_schedulers: bool = True
     warmup_epochs: int = MISSING
     train_codebook: bool = True
-    pipnet_regularization_weight: float = 1.0
 
 
 @dataclass

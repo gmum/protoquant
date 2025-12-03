@@ -13,6 +13,13 @@ from src.config.ssl_config import SelfSupervisedConfig
 from torchvision.transforms import v2 as transforms_v2
 from src.ssl_utils import evaluate_linear_probe, train_epoch_ssl, create_scheduler
 import wandb
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*UnsupportedFieldAttributeWarning.*",
+    module="pydantic._internal._generate_schema",
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

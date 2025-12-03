@@ -1,3 +1,11 @@
+import warnings
+# Silence noisy Pydantic v2 schema warnings emitted by third-party libs
+warnings.filterwarnings(
+    "ignore",
+    message=".*UnsupportedFieldAttributeWarning.*",
+    module="pydantic._internal._generate_schema",
+)
+
 from pathlib import Path
 from omegaconf import OmegaConf
 import torch

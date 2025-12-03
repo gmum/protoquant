@@ -26,6 +26,13 @@ import logging
 import hydra
 from src.config.main_config import MainConfig
 from src.distributed_utils import create_samplers
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*UnsupportedFieldAttributeWarning.*",
+    module="pydantic._internal._generate_schema",
+)
 
 
 logger = logging.getLogger(__name__)

@@ -22,6 +22,14 @@ import hydra
 from src.config.main_config import MainConfig
 from torchvision.transforms import v2 as transforms_v2
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*UnsupportedFieldAttributeWarning.*",
+    module="pydantic._internal._generate_schema",
+)
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

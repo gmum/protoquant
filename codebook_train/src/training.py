@@ -121,13 +121,10 @@ def validate_epoch_cosine_codebook(
 
     model.eval()
 
-    # Initialize torchmetrics for validation
-    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1).to(
-        device
-    )
-    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=5).to(
-        device
-    )
+    # Initialize torchmetrics for validation with distributed sync
+    k5 = min(5, num_classes)
+    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1, sync_on_compute=True).to(device)
+    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=k5, sync_on_compute=True).to(device)
 
     with torch.no_grad():
         for inputs, labels in val_dataloader:
@@ -142,7 +139,7 @@ def validate_epoch_cosine_codebook(
             top1_accuracy.update(logits, labels)
             top5_accuracy.update(logits, labels)
 
-    # Compute final accuracies (automatically handles distributed reduction)
+    # Compute final accuracies (synchronized across distributed processes)
     top1_acc = top1_accuracy.compute() * 100
     top5_acc = top5_accuracy.compute() * 100
 
@@ -232,21 +229,29 @@ def validate_epoch(
     model: nn.Module, val_dataloader: torch.utils.data.DataLoader, device: torch.device
 ) -> tuple[float, float]:
     model.eval()
-    top1_correct, top5_correct, total = 0, 0, 0
+
+    top1_metric: Accuracy | None = None
+    top5_metric: Accuracy | None = None
+    num_classes: int | None = None
 
     with torch.no_grad():
         for inputs, labels in val_dataloader:
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs = inputs.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
             logits = model(inputs)
-            _, pred = logits.topk(5, 1, True, True)
 
-            total += labels.size(0)
-            top1_correct += (pred[:, :1] == labels.view(-1, 1)).sum().item()
-            top5_correct += (pred == labels.view(-1, 1)).sum().item()
+            if num_classes is None:
+                num_classes = int(logits.shape[1])
+                top1_metric = Accuracy(task="multiclass", num_classes=num_classes, top_k=1, sync_on_compute=True).to(device)
+                k5 = min(5, num_classes)
+                top5_metric = Accuracy(task="multiclass", num_classes=num_classes, top_k=k5, sync_on_compute=True).to(device)
 
-    top1_acc = (top1_correct / total) * 100
-    top5_acc = (top5_correct / total) * 100
+            top1_metric.update(logits, labels)  # type: ignore[union-attr]
+            top5_metric.update(logits, labels)  # type: ignore[union-attr]
+
+    top1_acc = float((top1_metric.compute() * 100).item()) if top1_metric is not None else 0.0  # type: ignore[union-attr]
+    top5_acc = float((top5_metric.compute() * 100).item()) if top5_metric is not None else 0.0  # type: ignore[union-attr]
     return top1_acc, top5_acc
 
 
@@ -361,13 +366,10 @@ def validate_epoch_ema_codebook(
 
     model.eval()
 
-    # Initialize torchmetrics for validation
-    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1).to(
-        device
-    )
-    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=5).to(
-        device
-    )
+    # Initialize torchmetrics for validation with distributed sync
+    k5 = min(5, num_classes)
+    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1, sync_on_compute=True).to(device)
+    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=k5, sync_on_compute=True).to(device)
 
     with torch.no_grad():
         for inputs, labels in val_dataloader:
@@ -382,7 +384,7 @@ def validate_epoch_ema_codebook(
             top1_accuracy.update(logits, labels)
             top5_accuracy.update(logits, labels)
 
-    # Compute final accuracies
+    # Compute final accuracies (synchronized across distributed processes)
     top1_acc = top1_accuracy.compute() * 100
     top5_acc = top5_accuracy.compute() * 100
 
@@ -407,10 +409,9 @@ def train_epoch_pipnet(
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: torch.device,
-    reg_weight: float = 0.0,
     wandb_run=None,
 ) -> None:
-    """One training epoch for PIPNet head with auxiliary regularization.
+    """One training epoch for PIPNet head.
 
     Adds a penalty term: log(1 + (p * w)^2) where p are pooled proto activations and w
     are the classifier weights for the (possibly soft) target labels.
@@ -427,18 +428,7 @@ def train_epoch_pipnet(
         logits = model(transformed_images)
         ce_loss = criterion(logits, transformed_labels)
 
-        # Use hard labels (pre-mixup) for the regularizer for stability
-        reg_labels = labels
-
-        base = model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
-        proto_fvec = getattr(base, "_last_proto_fvec", None)
-        if proto_fvec is not None and hasattr(base, "model_to_wrap") and hasattr(base.model_to_wrap, "head") and hasattr(base.model_to_wrap.head, "regularization_penalty"):
-            reg_loss = base.model_to_wrap.head.regularization_penalty(proto_fvec, reg_labels)
-        else:
-            reg_loss = torch.tensor(0.0, device=device)
-
-        total_loss = ce_loss + reg_weight * reg_loss
-        total_loss.backward()
+        ce_loss.backward()
         optimizer.step()
 
         with torch.no_grad():
@@ -446,14 +436,11 @@ def train_epoch_pipnet(
 
         if wandb_run:
             wandb_run.log({
-                "Train Loss": float(total_loss.item()),
                 "Train CE Loss": float(ce_loss.item()),
-                "Train Reg Penalty": float(reg_loss.item()),
-                "Train Reg Loss (weighted)": float((reg_weight * reg_loss).item()),
                 "Train Accuracy": float(train_acc.item()),
             })
 
         if i % log_every == 0:
             logger.info(
-                f"Iter {i}/{len(train_dataloader)} | Loss: {total_loss.item():.4f} | CE: {ce_loss.item():.4f} | Reg({reg_weight}): {reg_loss.item():.4f} | Acc: {train_acc.item():.4f}"
+                f"Iter {i}/{len(train_dataloader)} | CE: {ce_loss.item():.4f} | Acc: {train_acc.item():.4f}"
             )

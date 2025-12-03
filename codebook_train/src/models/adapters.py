@@ -175,6 +175,33 @@ class VisionTransformerAdapter(ModelAdapter):
         return unfreezable[:num_layers]
 
 
+# --- TorchVision ViT (GAP wrapper) Adapter ---
+
+class TorchVisionViTAdapter(ModelAdapter):
+    """
+    Adapter for ViTWithGAP (torchvision backbone wrapped for GAP).
+    Unfreezing order: heads -> encoder layers (last to first).
+    """
+
+    def extract_features(self, model: nn.Module) -> nn.Module:
+        return _ViTFeaturesWrapper(model)
+
+    def extract_classifier(self, model: nn.Module) -> nn.Module:
+        return _ViTHeadWrapper(model)
+
+    def get_unfreezable_layers(
+        self, model: nn.Module, num_layers: int
+    ) -> list[nn.Module]:
+        if num_layers <= 0:
+            return []
+        layers: list[nn.Module] = [model.vit.heads]
+        # encoder.layers is an Iterable of TransformerEncoderLayer
+        if hasattr(model.vit, "encoder") and hasattr(model.vit.encoder, "layers"):
+            enc_layers = list(model.vit.encoder.layers)
+            layers.extend(reversed(enc_layers))
+        return layers[:num_layers]
+
+
 def guess_adapter(model: nn.Module) -> ModelAdapter:
     """
     Guess the appropriate model adapter based on the model.
@@ -186,9 +213,16 @@ def guess_adapter(model: nn.Module) -> ModelAdapter:
         ModelAdapter: The appropriate model adapter.
     """
 
+    # Prefer TorchVision GAP ViT first so we don't fall back to the generic ViT adapter
+    if model.__class__.__name__ == "ViTWithGAP" or (
+        hasattr(model, "vit") and hasattr(model.vit, "encoder")
+    ):
+        return TorchVisionViTAdapter()
+
     if hasattr(model, "features") and hasattr(model, "classifier"):
         return ConvNextAdapter()
 
+    # Generic ViT (e.g., timm): exposes forward_features/forward_head on the base model
     if hasattr(model, "forward_features") and hasattr(model, "forward_head"):
         return VisionTransformerAdapter()
 

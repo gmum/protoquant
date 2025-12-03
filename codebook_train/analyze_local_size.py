@@ -6,9 +6,11 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from src.construct_model import get_backbone, construct_model
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+from torchmetrics import Accuracy
 
 # --- Add project's source to the Python path for imports ---
 # This ensures that modules from the 'src' directory can be found.
@@ -21,9 +23,10 @@ if str(project_root) not in sys.path:
 # Import necessary classes and functions from the project structure.
 from src.config.pipnet_config import BaseDatasetConfig, PipNetConfig
 from src.datasets.construct_dataset import get_dataset
-from src.datasets.transforms import get_default_image_transforms
+from src.datasets.transforms import get_default_image_transforms, get_deit_transforms
 from src.models.pipnet import QuantizedPIPNetHead
 from src.pipnet_utils import PIPNetWrapper, TrainingWrapper, build_pipnet_model
+from src.training import validate_epoch
 
 # --- Basic Logger Setup ---
 # Configure a logger for clear and timed console output.
@@ -88,44 +91,6 @@ def print_local_size_report(
     print("=" * 60 + "\n")
 
 @torch.no_grad()
-def validate_top_k(
-    model: nn.Module,
-    val_dataloader: torch.utils.data.DataLoader,
-    device: torch.device,
-) -> float:
-    """
-    Performs a validation run on a given dataloader and returns top-1 accuracy.
-    This is a simplified, non-distributed validation loop for analysis.
-
-    Args:
-        model (nn.Module): The model to evaluate.
-        val_dataloader (torch.utils.data.DataLoader): The dataloader for validation data.
-        device (torch.device): The device (e.g., 'cuda:0') to run inference on.
-
-    Returns:
-        float: The top-1 accuracy percentage.
-    """
-    model.eval()  # Set the model to evaluation mode
-    correct = 0
-    total = 0
-
-    # Use tqdm for a progress bar during validation
-    pbar = tqdm(val_dataloader, desc="Validating", leave=False, ncols=100)
-    for images, labels in pbar:
-        images, labels = images.to(device), labels.to(device)
-
-        # The TrainingWrapper ensures model(images) returns logits directly
-        logits = model(images)
-
-        # Get the index of the max log-probability (the predicted class)
-        _, predicted = torch.max(logits.data, 1)
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
-
-    accuracy = 100 * correct / total
-    return accuracy
-
-
 def evaluate_with_top_k_prototypes(
     model: PIPNetWrapper,
     head: QuantizedPIPNetHead,
@@ -146,6 +111,10 @@ def evaluate_with_top_k_prototypes(
     """
     logger.info(f"Starting top-k prototype evaluation for k in {top_k_list}...")
 
+    # Ensure eval mode on the underlying modules
+    model.eval()
+    head.eval()
+
     eval_model = TrainingWrapper(model).to(device)
     original_weights = head.classifier.weight.data.clone()
     positive_weights = torch.relu(original_weights)
@@ -156,7 +125,8 @@ def evaluate_with_top_k_prototypes(
 
     # --- Evaluate the full model first as a baseline ---
     logger.info("--- Evaluating Full Model (Baseline) ---")
-    full_model_accuracy = validate_top_k(eval_model, val_loader, device)
+    full_top1, _ = validate_epoch(eval_model, val_loader, device)
+    full_model_accuracy = full_top1
     full_model_protos_used = (positive_weights > 0).any(dim=0).sum().item()
     # Avg local size per class at current threshold
     full_local_sizes = head.calculate_local_size(threshold=threshold).float()
@@ -195,9 +165,9 @@ def evaluate_with_top_k_prototypes(
             f"Avg local size/class (k={k}) @ thr={threshold}: {avg_local_sizes[k]:.2f}"
         )
 
-        accuracy = validate_top_k(eval_model, val_loader, device)
-        results[k] = accuracy
-        logger.info(f"Validation accuracy for k={k}: {accuracy:.2f}%")
+        top1, _ = validate_epoch(eval_model, val_loader, device)
+        results[k] = top1
+        logger.info(f"Validation accuracy for k={k}: {top1:.2f}%")
 
     head.classifier.weight.data = original_weights
     logger.info("Restored original model weights.")
@@ -276,7 +246,18 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
 
     logger.info("Building and loading PIP-Net model from checkpoint...")
     try:
-        model, head = build_pipnet_model(cfg, device)
+        base_model = construct_model(cfg, device)  # type: ignore
+        backbone = get_backbone(base_model)
+
+        # Freeze backbone (train head and optionally codebook only)
+        model, head = build_pipnet_model(
+            backbone=backbone, 
+            num_classes=cfg.dataset.num_classes, 
+            device=device, 
+            pipnet_checkpoint_path=cfg.pipnet_checkpoint_path,
+            codebook_path=cfg.codebook_path,
+            train_codebook=cfg.training.train_codebook
+        )
         model.eval()
         head.eval()
         logger.info("Model loaded successfully.")
@@ -350,26 +331,18 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
         logger.info(
             f"Loading validation data for '{args.dataset_name}' from '{args.dataset_path}'"
         )
-        # Ensure fixed-size tensors for collation. CUB images are pre-cropped to birds,
-        # but still variable-sized; enforce 224x224. For non-CUB, use 256->224 evaluation.
+        # Match main_train_pipnet transform logic exactly using inline conditionals
         is_cub = (args.dataset_name.lower() == "cub200")
-        if is_cub:
-            _, val_transform = get_default_image_transforms(
-                resize_value=224,
-                crop_value=224,
-                is_precropped=True,
-                horizontal_flip=None,
-                autoaugment=False,
-                random_erase=None,
-            )
+        if args.use_deit_transforms:
+            _, val_transform = get_deit_transforms(is_precropped=is_cub)
         else:
             _, val_transform = get_default_image_transforms(
-                resize_value=256,
-                crop_value=224,
-                is_precropped=False,
-                horizontal_flip=None,
                 autoaugment=False,
+                resize_value=224 if is_cub else 256,
+                crop_value=None if is_cub else 224,
                 random_erase=None,
+                horizontal_flip=None,
+                is_precropped=is_cub,
             )
         _, val_ds = get_dataset(
             name=args.dataset_name,
@@ -485,6 +458,11 @@ def main():
         default=4,
         help="Number of workers for data loading.",
     )
+    eval_group.add_argument(
+        "--use-deit-transforms",
+        action="store_true",
+        help="Use DeiT evaluation transforms (resize 256 -> center-crop 224, bicubic, etc.). Must match training if that was used.",
+    )
 
     args = parser.parse_args()
 
@@ -500,6 +478,7 @@ def main():
     cfg.training.train_codebook = False  # Ensure we are in evaluation mode.
     cfg.dataset = BaseDatasetConfig(num_classes=args.num_classes)
 
+    logger.info(f"Arguments: {args}")
     try:
         analyze_prototypes(cfg, args)
     except (ValueError, FileNotFoundError) as e:
