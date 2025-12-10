@@ -24,8 +24,8 @@ if str(project_root) not in sys.path:
 from src.config.pipnet_config import BaseDatasetConfig, PipNetConfig
 from src.datasets.construct_dataset import get_dataset
 from src.datasets.transforms import get_default_image_transforms, get_deit_transforms
-from src.models.pipnet import QuantizedPIPNetHead
-from src.pipnet_utils import PIPNetWrapper, TrainingWrapper, build_pipnet_model
+from src.models.proto_quantnet import ProtoQuantNet
+from src.pipnet_utils import TrainingWrapper, build_pipnet_model
 from src.training import validate_epoch
 
 # --- Basic Logger Setup ---
@@ -42,7 +42,7 @@ def print_local_size_report(
     pipnet_checkpoint_path: Path,
     model_name: str,
     num_classes: int,
-    head,
+    model: ProtoQuantNet,
     threshold: float,
     local_sizes: torch.Tensor,
 ) -> None:
@@ -52,13 +52,13 @@ def print_local_size_report(
     print(f"Model Checkpoint:       {pipnet_checkpoint_path.name}")
     print(f"Backbone:               {model_name}")
     print(f"Number of Classes:      {num_classes}")
-    print(f"Total Prototypes (P):   {head.P}")
+    print(f"Total Prototypes (P):   {model.num_prototypes}")
     print(f"Significance Threshold: {threshold}")
     print("-" * 60)
 
     logger.info("Analyzing classifier weight distribution...")
     with torch.no_grad():
-        positive_weights = torch.relu(head.classifier.weight)
+        positive_weights = torch.relu(model.classifier.weight)
 
         print("\n" + "-" * 60)
         print("      Classifier Weight Distribution Analysis")
@@ -79,7 +79,7 @@ def print_local_size_report(
     max_size = int(local_sizes.max().item())
 
     with torch.no_grad():
-        positive_weights = torch.relu(head.classifier.weight.detach())
+        positive_weights = torch.relu(model.classifier.weight.detach())
         is_significant_mask = positive_weights > threshold
         unique_protos_used = int(is_significant_mask.any(dim=0).sum().item())
 
@@ -87,13 +87,12 @@ def print_local_size_report(
     print("Summary Statistics:")
     print(f"  Average local size per class: {avg_size:.2f}")
     print(f"  Min | Max local size:         {min_size} | {max_size}")
-    print(f"  Total unique prototypes used: {unique_protos_used} / {head.P} ({ (unique_protos_used / head.P) * 100:.2f}%)")
+    print(f"  Total unique prototypes used: {unique_protos_used} / {model.num_prototypes} ({ (unique_protos_used / model.num_prototypes) * 100:.2f}%)")
     print("=" * 60 + "\n")
 
 @torch.no_grad()
 def evaluate_with_top_k_prototypes(
-    model: PIPNetWrapper,
-    head: QuantizedPIPNetHead,
+    model: ProtoQuantNet,
     val_loader: torch.utils.data.DataLoader,
     top_k_list: list[int],
     device: torch.device,
@@ -111,12 +110,11 @@ def evaluate_with_top_k_prototypes(
     """
     logger.info(f"Starting top-k prototype evaluation for k in {top_k_list}...")
 
-    # Ensure eval mode on the underlying modules
+    # Ensure eval mode
     model.eval()
-    head.eval()
 
     eval_model = TrainingWrapper(model).to(device)
-    original_weights = head.classifier.weight.data.clone()
+    original_weights = model.classifier.weight.data.clone()
     positive_weights = torch.relu(original_weights)
 
     results: dict[str | int, float] = {}
@@ -129,37 +127,37 @@ def evaluate_with_top_k_prototypes(
     full_model_accuracy = full_top1
     full_model_protos_used = (positive_weights > 0).any(dim=0).sum().item()
     # Avg local size per class at current threshold
-    full_local_sizes = head.calculate_local_size(threshold=threshold).float()
+    full_local_sizes = model.calculate_local_size(threshold=threshold).float()
     avg_local_sizes['Full'] = full_local_sizes.mean().item()
 
     results['Full'] = full_model_accuracy
     unique_protos_counts['Full'] = full_model_protos_used
     
     logger.info(f"Full Model Validation Accuracy: {full_model_accuracy:.2f}%")
-    logger.info(f"Unique Prototypes Used in Full Model: {full_model_protos_used} / {head.P}")
+    logger.info(f"Unique Prototypes Used in Full Model: {full_model_protos_used} / {model.num_prototypes}")
     logger.info(f"Avg local size/class (Full) @ thr={threshold}: {avg_local_sizes['Full']:.2f}")
 
     for k in top_k_list:
-        if k > head.P:
+        if k > model.num_prototypes:
             logger.warning(
-                f"k={k} is larger than the total number of prototypes ({head.P}). Skipping."
+                f"k={k} is larger than the total number of prototypes ({model.num_prototypes}). Skipping."
             )
             continue
 
         logger.info(f"--- Evaluating with k = {k} ---")
-        _, top_k_indices = torch.topk(positive_weights, k=k, dim=1)
-        mask = torch.zeros_like(original_weights, device=device)
-        mask.scatter_(1, top_k_indices, 1.0)
-        masked_weights = original_weights * mask
-        head.classifier.weight.data = masked_weights
-
-        unique_protos_used = mask.any(dim=0).sum().item()
+        
+        # Restore original weights before limiting
+        model.classifier.weight.data = original_weights.clone()
+        
+        # Use the built-in limit_prototypes method
+        unique_protos_used = model.limit_prototypes(k)
         unique_protos_counts[k] = unique_protos_used
+        
         # Avg local size per class at threshold after masking
-        k_local_sizes = head.calculate_local_size(threshold=threshold).float()
+        k_local_sizes = model.calculate_local_size(threshold=threshold).float()
         avg_local_sizes[k] = k_local_sizes.mean().item()
         logger.info(
-            f"Number of unique prototypes used for k={k}: {unique_protos_used} / {head.P}"
+            f"Number of unique prototypes used for k={k}: {unique_protos_used} / {model.num_prototypes}"
         )
         logger.info(
             f"Avg local size/class (k={k}) @ thr={threshold}: {avg_local_sizes[k]:.2f}"
@@ -169,7 +167,8 @@ def evaluate_with_top_k_prototypes(
         results[k] = top1
         logger.info(f"Validation accuracy for k={k}: {top1:.2f}%")
 
-    head.classifier.weight.data = original_weights
+    # Restore original weights at the end
+    model.classifier.weight.data = original_weights
     logger.info("Restored original model weights.")
 
     return results, unique_protos_counts, avg_local_sizes
@@ -244,13 +243,13 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    logger.info("Building and loading PIP-Net model from checkpoint...")
+    logger.info("Building and loading ProtoQuantNet model from checkpoint...")
     try:
         base_model = construct_model(cfg, device)  # type: ignore
         backbone = get_backbone(base_model)
 
-        # Freeze backbone (train head and optionally codebook only)
-        model, head = build_pipnet_model(
+        # Build ProtoQuantNet model
+        model = build_pipnet_model(
             backbone=backbone, 
             num_classes=cfg.dataset.num_classes, 
             device=device, 
@@ -259,7 +258,6 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
             train_codebook=cfg.training.train_codebook
         )
         model.eval()
-        head.eval()
         logger.info("Model loaded successfully.")
     except Exception as e:
         logger.error(f"Failed to load or build model: {e}", exc_info=True)
@@ -268,7 +266,7 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
     # --- Original Analysis: Weight Distribution Histogram ---
     logger.info("Visualizing weight distribution for a single class...")
     with torch.no_grad():
-        class_0_weights = torch.relu(head.classifier.weight[0]).cpu().numpy()
+        class_0_weights = torch.relu(model.classifier.weight[0]).cpu().numpy()
         non_zero_weights = class_0_weights[class_0_weights > 0]
 
         if len(non_zero_weights) > 0:
@@ -289,7 +287,7 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
 
     # --- Original Analysis: Local Size Calculation ---
     logger.info(f"Calculating local sizes with threshold = {args.threshold}...")
-    local_sizes = head.calculate_local_size(threshold=args.threshold)
+    local_sizes = model.calculate_local_size(threshold=args.threshold)
 
     print("\n" + "=" * 60)
     print("      Prototype Local Size Analysis Report")
@@ -302,7 +300,7 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
         pipnet_checkpoint_path=args.pipnet_checkpoint_path,
         model_name=args.model_name,
         num_classes=args.num_classes,
-        head=head,
+        model=model,
         threshold=args.threshold,
         local_sizes=local_sizes,
     )
@@ -361,7 +359,6 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
         # 3. Run the core evaluation function
         results, unique_protos, avg_local_sizes = evaluate_with_top_k_prototypes(
             model=model,
-            head=head,
             val_loader=val_loader,
             top_k_list=top_k_list,
             device=device,
@@ -378,7 +375,7 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
             print(f"{k_str:<25} | {results[k]:<25.2f} | {unique_protos[k]:<20} | {avg_local_sizes[k]:<20.2f}")
         print("=" * 70 + "\n")
 
-        plot_results(results, unique_protos, head.P, output_dir)
+        plot_results(results, unique_protos, model.num_prototypes, output_dir)
 
 
 

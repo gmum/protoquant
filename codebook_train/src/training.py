@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from src.pipnet_utils import TrainingWrapper
 import torch
 import torch.nn as nn
 from src.models.codebook_wrappers import CNNCodebookWrapper
@@ -403,7 +404,7 @@ def validate_epoch_ema_codebook(
 
 
 def train_epoch_pipnet(
-    model: nn.Module,
+    model: TrainingWrapper,
     train_dataloader: torch.utils.data.DataLoader,
     transforms: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -427,8 +428,14 @@ def train_epoch_pipnet(
 
         logits = model(transformed_images)
         ce_loss = criterion(logits, transformed_labels)
-
-        ce_loss.backward()
+        if isinstance(model, nn.parallel.DistributedDataParallel):
+            reg_loss = model.module.last_out.classifier_sparsity_loss # type: ignore
+        else:
+            reg_loss = model.last_out.classifier_sparsity_loss # type: ignore
+        
+        total_loss = ce_loss + (reg_loss if reg_loss is not None else 0.0)
+        
+        total_loss.backward()
         optimizer.step()
 
         with torch.no_grad():
@@ -436,11 +443,13 @@ def train_epoch_pipnet(
 
         if wandb_run:
             wandb_run.log({
+                "Train Total Loss": float(total_loss.item()),
                 "Train CE Loss": float(ce_loss.item()),
+                "Train Reg Loss": float(reg_loss.item()) if reg_loss is not None else 0.0,
                 "Train Accuracy": float(train_acc.item()),
             })
 
         if i % log_every == 0:
             logger.info(
-                f"Iter {i}/{len(train_dataloader)} | CE: {ce_loss.item():.4f} | Acc: {train_acc.item():.4f}"
+                f"Iter {i}/{len(train_dataloader)} | CE: {ce_loss.item():.4f} | Reg Loss: {reg_loss.item() if reg_loss is not None else 0.0:.4f} | Acc: {train_acc.item():.4f}"
             )

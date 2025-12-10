@@ -16,6 +16,7 @@ from timm.loss import SoftTargetCrossEntropy
 from src.config.pipnet_config import PipNetConfig
 from src.construct_model import construct_model, get_backbone
 
+from src.models.proto_quantnet import ProtoQuantNet
 from src.config.pipnet_config import PipNetConfig
 from src.datasets.construct_dataset import get_dataset, get_dataloaders
 from src.distributed_utils import create_samplers, setup_hydra_logging_for_rank
@@ -138,18 +139,21 @@ def prepare_and_train(
     backbone = get_backbone(base_model)
 
     # Freeze backbone (train head and optionally codebook only)
-    model, head = build_pipnet_model(
+    model = build_pipnet_model(
         backbone=backbone, 
         num_classes=cfg.dataset.num_classes, 
         device=device, 
         pipnet_checkpoint_path=cfg.pipnet_checkpoint_path,
         codebook_path=cfg.codebook_path,
-        train_codebook=cfg.training.train_codebook
+        train_codebook=cfg.training.train_codebook,
+        classifier_sparsity_lambda=cfg.training.classifier_sparsity_lambda,
+        use_random_codes=cfg.training.use_random_codes,
     )
+
     model = TrainingWrapper(model)
     
     # log the size of the codebook
-    num_codes = head.codebook.shape[0]
+    num_codes = model.model_to_wrap.num_prototypes
     logger.info(f"Codebook size: {num_codes}")
     if wandb_run:
         wandb_run.config.update({"codebook_size": num_codes})
@@ -170,10 +174,7 @@ def prepare_and_train(
         find_unused_parameters=True,
     )
     logger.info(f"Model: {model}")
-
-    # Optimizer: train only the PIPNet head
-    # Reuse base optimizer config for the head
-    head_optimizer = hydra.utils.instantiate(cfg.base_optimizer, head.parameters())
+    optimizer = hydra.utils.instantiate(cfg.base_optimizer, model.parameters())
 
     # LR schedulers
     scheduler_args = SchedulerArgs(
@@ -182,7 +183,7 @@ def prepare_and_train(
         lr=cfg.base_optimizer.lr
     )
     scheduler = create_schedulers(
-        optimizers=[head_optimizer],
+        optimizers=[optimizer],
         scheduler_args=scheduler_args
     )[0]
     logger.info(f"Scheduler: {scheduler}")
@@ -207,7 +208,7 @@ def prepare_and_train(
         train_dataloader=train_dl,
         train_transforms=mixup_fn, # type: ignore
         val_dataloader=val_dl,
-        optimizer=head_optimizer,
+        optimizer=optimizer,
         scheduler=scheduler,
         criterion=criterion,
         device=device,
@@ -218,7 +219,7 @@ def prepare_and_train(
 
 
 def train_loop(
-    model: nn.Module,
+    model: TrainingWrapper | nn.parallel.DistributedDataParallel,
     cfg: PipNetConfig,
     train_dataloader: torch.utils.data.DataLoader,
     train_transforms: torch.nn.Module,

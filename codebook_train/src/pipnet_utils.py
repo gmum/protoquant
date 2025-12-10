@@ -2,55 +2,58 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 
-from src.models.pipnet import QuantizedPIPNetHead
+from src.models.proto_quantnet import ProtoQuantNet, ProtoQuantOutput
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class PIPNetWrapper(nn.Module):
-    def __init__(self, backbone: nn.Module, head: QuantizedPIPNetHead):
-        super().__init__()
-        self.backbone = backbone
-        self.head = head
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        feats = self.backbone(x)
-        out_obj = self.head(feats)
-        return out_obj
-
-    def train(self, mode: bool = True):
-        # Keep head in requested mode, but freeze backbone stats
-        super().train(mode)
-        self.backbone.eval()
-        return self
-    
-
 class TrainingWrapper(torch.nn.Module):
-    def __init__(self, model_to_wrap):
+    """Wrapper to extract logits from ProtoQuantOutput for compatibility with training loops."""
+    
+    def __init__(self, model_to_wrap: ProtoQuantNet):
         super().__init__()
         self.model_to_wrap = model_to_wrap
-        self._last_proto_fvec = None
+        self.last_out: ProtoQuantOutput | None = None
     
-    # This forward pass calls the underlying model and returns only the logits
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass that returns only logits.
+        
+        Args:
+            x: Input tensor
+            
+        Returns:
+            Logits tensor for classification
+        """
         out = self.model_to_wrap(x)
-        # Cache proto vector for auxiliary regularization during training
-        self._last_proto_fvec = out.proto_fvec
+        self.last_out = out  # Store full output for later inspection if needed
         return out.logits
 
 
-def _load_pipnet_from_checkpoint(
+def _load_protoquant_from_checkpoint(
     backbone: nn.Module,
     checkpoint_path: str,
     num_classes: int,
     device: torch.device,
-    train_codebook: bool = False
-) -> Tuple[PIPNetWrapper, nn.Module]:
+    train_codebook: bool = False,
+    temperature: float = 0.1,
+    classifier_sparsity_lambda: float = 0.0,
+) -> ProtoQuantNet:
+    """Load ProtoQuantNet model from a checkpoint.
+    
+    Args:
+        backbone: Feature extraction network
+        checkpoint_path: Path to checkpoint file
+        num_classes: Number of output classes
+        device: Device to load model onto
+        train_codebook: Whether prototypes should be trainable
+        temperature: Temperature for softmax pooling
+        classifier_sparsity_lambda: L1 regularization strength on classifier weights
+        
+    Returns:
+        Loaded ProtoQuantNet model
     """
-    Loads a full PIPNet model from a .pth checkpoint.
-    """
-    logger.info(f"Loading pre-trained PIPNet model from: {checkpoint_path}")
+    logger.info(f"Loading ProtoQuantNet model from: {checkpoint_path}")
     
     ckpt = torch.load(checkpoint_path, map_location=device)
     
@@ -77,43 +80,55 @@ def _load_pipnet_from_checkpoint(
                 if k.startswith(p)
             }
 
-    # Extract codebook to reconstruct the head
-    # Note: We look for "head.codebook" because that's where it lives in the wrapper
-    if "head.codebook" not in model_state_dict:
-        raise ValueError("Loaded model state_dict is missing 'head.codebook'.")
+    # Extract codebook
+    if "codes" not in model_state_dict:
+        raise ValueError("Loaded model state_dict is missing 'codes' key.")
     
-    code_tensor = model_state_dict["head.codebook"]
+    code_tensor = model_state_dict["codes"]
 
-    # Re-instantiate the head
-    # We use the explicitly passed 'train_codebook' arg, allowing override of saved state
-    pip_head = QuantizedPIPNetHead(
+    # Build model
+    model = ProtoQuantNet(
+        backbone=backbone,
+        codes=code_tensor.to(device),
         num_classes=num_classes,
-        codebook=code_tensor.to(device),
-        normalize=True,
+        train_codebook=train_codebook,
+        temperature=temperature,
         bias=False,
-        train_codebook=train_codebook, 
+        classifier_sparsity_lambda=classifier_sparsity_lambda,
+        freeze_backbone=True,
     ).to(device)
-
-    model = PIPNetWrapper(backbone=backbone, head=pip_head).to(device)
     
     # Load weights
     incompatible_keys = model.load_state_dict(model_state_dict, strict=False)
     logger.info(f"Loaded state_dict. Incompatible keys: {incompatible_keys}")
 
-    return model, pip_head
+    return model
 
 
-def _build_pipnet_from_codebook(
+def _build_protoquant_from_codebook(
     backbone: nn.Module,
     codebook_path: str,
     num_classes: int,
     device: torch.device,
-    train_codebook: bool = False
-) -> Tuple[PIPNetWrapper, nn.Module]:
+    train_codebook: bool = False,
+    temperature: float = 0.1,
+    classifier_sparsity_lambda: float = 0.0,
+) -> ProtoQuantNet:
+    """Build ProtoQuantNet from backbone and codebook file.
+    
+    Args:
+        backbone: Feature extraction network
+        codebook_path: Path to codebook tensor file
+        num_classes: Number of output classes
+        device: Device to load model onto
+        train_codebook: Whether prototypes should be trainable
+        temperature: Temperature for softmax pooling
+        classifier_sparsity_lambda: L1 regularization strength on classifier weights
+        
+    Returns:
+        New ProtoQuantNet model
     """
-    Builds a new PIPNet using a backbone and a standalone codebook tensor file.
-    """
-    logger.info(f"Building new PIPNet model from backbone and codebook: {codebook_path}")
+    logger.info(f"Building ProtoQuantNet from backbone and codebook: {codebook_path}")
     
     ckpt = torch.load(codebook_path, map_location=device)
     
@@ -128,16 +143,18 @@ def _build_pipnet_from_codebook(
     if code_tensor.ndim != 2:
         raise ValueError(f"Unexpected code tensor shape: {tuple(code_tensor.shape)}")
 
-    pip_head = QuantizedPIPNetHead(
+    model = ProtoQuantNet(
+        backbone=backbone,
+        codes=code_tensor.to(device),
         num_classes=num_classes,
-        codebook=code_tensor.to(device),
-        normalize=True,
-        bias=False,
         train_codebook=train_codebook,
+        temperature=temperature,
+        bias=False,
+        classifier_sparsity_lambda=classifier_sparsity_lambda,
+        freeze_backbone=True,
     ).to(device)
-
-    model = PIPNetWrapper(backbone=backbone, head=pip_head).to(device)
-    return model, pip_head
+    
+    return model
 
 
 def build_pipnet_model(
@@ -146,49 +163,69 @@ def build_pipnet_model(
     device: torch.device,
     pipnet_checkpoint_path: str | None = None,
     codebook_path: str | None = None,
-    train_codebook: bool = False
-) -> Tuple[PIPNetWrapper, nn.Module]:
-    """
-    Main entry point to build/load the PIPNet model.
+    train_codebook: bool = False,
+    temperature: float = 0.1,
+    classifier_sparsity_lambda: float = 0.0,
+    use_random_codes: bool = False,
+) -> ProtoQuantNet:
+    """Build ProtoQuantNet model from checkpoint or codebook.
 
     Args:
-        backbone (nn.Module): The feature extractor (e.g., ResNet without fc layer).
-                              Must imply strict=False when loading weights if provided.
-        num_classes (int): Number of output classes.
-        device (torch.device): Device to load tensors onto.
-        pipnet_checkpoint_path (str, optional): Path to full .pth model checkpoint.
-        codebook_path (str, optional): Path to just the codebook weights.
-        train_codebook (bool): Whether the prototypes should be trainable.
+        backbone: Feature extraction network (e.g., ResNet without fc layer)
+        num_classes: Number of output classes
+        device: Device to load model onto
+        pipnet_checkpoint_path: Path to full model checkpoint (optional)
+        codebook_path: Path to codebook weights only (optional)
+        train_codebook: Whether prototypes should be trainable
+        temperature: Temperature for softmax pooling (default: 0.1)
+        classifier_sparsity_lambda: L1 regularization on classifier weights (default: 0.0)
+        use_random_codes: Replace loaded codes with random normal distribution (default: False)
 
     Returns:
-        model (PIPNetWrapper): The full model.
-        pip_head (QuantizedPIPNetHead): The head component.
+        ProtoQuantNet model
+        
+    Raises:
+        ValueError: If neither checkpoint_path nor codebook_path is provided
     """
 
-    # 1. Freeze backbone (standard PIPNet procedure)
+    # Freeze backbone (standard procedure for prototype networks)
     for p in backbone.parameters():
         p.requires_grad = False
 
-    # 2. Dispatch
+    # Build model from checkpoint or codebook
     if pipnet_checkpoint_path:
-        model, pip_head = _load_pipnet_from_checkpoint(
+        model = _load_protoquant_from_checkpoint(
             backbone=backbone,
             checkpoint_path=pipnet_checkpoint_path,
             num_classes=num_classes,
             device=device,
-            train_codebook=train_codebook
+            train_codebook=train_codebook,
+            temperature=temperature,
+            classifier_sparsity_lambda=classifier_sparsity_lambda,
         )
     elif codebook_path:
-        model, pip_head = _build_pipnet_from_codebook(
+        model = _build_protoquant_from_codebook(
             backbone=backbone,
             codebook_path=codebook_path,
             num_classes=num_classes,
             device=device,
-            train_codebook=train_codebook
+            train_codebook=train_codebook,
+            temperature=temperature,
+            classifier_sparsity_lambda=classifier_sparsity_lambda,
         )
     else:
         raise ValueError(
             "Must provide either 'pipnet_checkpoint_path' or 'codebook_path'."
         )
+    
+    # Replace codes with random normal distribution if requested
+    if use_random_codes:
+        logger.info(f"Replacing {model.num_prototypes} codes with random normal distribution")
+        random_codes = torch.randn_like(model.codes)
+        if isinstance(model.codes, nn.Parameter):
+            model.codes = nn.Parameter(random_codes, requires_grad=model.codes.requires_grad)
+        else:
+            model.register_buffer("codes", random_codes)
+        logger.info("Codes replaced with random values")
 
-    return model, pip_head
+    return model

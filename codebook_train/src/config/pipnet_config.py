@@ -34,6 +34,8 @@ class TrainingConfig:
     enable_schedulers: bool = True
     warmup_epochs: int = MISSING
     train_codebook: bool = True
+    classifier_sparsity_lambda: float = 0.0
+    use_random_codes: bool = False  # Replace loaded codes with random normal distribution
 
 
 @dataclass
