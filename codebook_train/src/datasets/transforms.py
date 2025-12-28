@@ -6,6 +6,24 @@ from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from torchvision.transforms.v2 import Compose
 from typing import Any
 
+
+def get_raw_tensor_transforms(resize: int | None = None) -> tuple[Compose, Compose]:
+    """Return minimal transforms for datasets that already provide tensor inputs.
+
+    This is useful for benchmarks like FunnyBirds where the official protocol uses
+    no normalization and no augmentation.
+    
+    Args:
+        resize: If provided, resize images to this size (e.g., 224 for ViT models).
+    """
+    transform_list = []
+    if resize is not None:
+        transform_list.append(transforms_v2.Resize((resize, resize)))
+    transform_list.append(transforms_v2.ToDtype(torch.float32, scale=False))
+    
+    transform = transforms_v2.Compose(transform_list)
+    return transform, transform
+
 def get_default_image_transforms(
     resize_value: int | None = None,
     crop_value: int | None = None,

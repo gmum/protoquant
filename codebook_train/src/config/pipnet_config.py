@@ -31,6 +31,7 @@ class ModelConfig:
 class TrainingConfig:
     unfreeze_before: int = 0  # how many layers to unfreeze before the codebook
     label_smoothing: float = 0.1
+    use_mixup: bool = True
     enable_schedulers: bool = True
     warmup_epochs: int = MISSING
     train_codebook: bool = True
@@ -57,7 +58,9 @@ class PipNetConfig:
     epochs: int = MISSING
     dataset: BaseDatasetConfig = MISSING
     train_dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
-    val_dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
+    val_dataloader: DataloaderConfig = field(
+        default_factory=lambda: DataloaderConfig(drop_last=False)
+    )
 
     training: TrainingConfig = field(default_factory=TrainingConfig)
     _logging_level: int = INFO

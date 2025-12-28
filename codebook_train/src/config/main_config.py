@@ -33,6 +33,7 @@ class ModelConfig:
 class TrainingConfig:
     unfreeze_before: int = 0  # how many layers to unfreeze before the codebook
     label_smoothing: float = 0.1
+    use_mixup: bool = True
     enable_schedulers: bool = True
     warmup_epochs: int = MISSING
     use_amp: bool = False  # whether to use automatic mixed precision
@@ -71,7 +72,9 @@ class MainConfig:
 
     dataset: BaseDatasetConfig = MISSING
     train_dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
-    val_dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
+    val_dataloader: DataloaderConfig = field(
+        default_factory=lambda: DataloaderConfig(drop_last=False)
+    )
 
     codebook: BaseCodebookConfig = MISSING
     codebook_path: Optional[str] = None

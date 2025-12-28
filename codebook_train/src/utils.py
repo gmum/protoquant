@@ -77,7 +77,7 @@ class SchedulerArgs:
     epochs: int = 100            # Fewer epochs are needed for fine-tuning
     lr: float = 5e-5             # Lower learning rate is crucial
     warmup_epochs: int = 5       # Standard value
-    cooldown_epochs: int = 10    # Standard value
+    cooldown_epochs: int = 5     # Standard value
     min_lr: float = 1e-6         # The floor for the learning rate
     warmup_lr: float = 1e-6      # The learning rate to start the warmup from
     t_in_epochs: bool = True     # Step per-epoch via scheduler.step(epoch)
@@ -160,7 +160,7 @@ def create_feature_dataloader(
     train_dataloader: torch.utils.data.DataLoader,
     val_dataloader: torch.utils.data.DataLoader,
     device: torch.device,
-    transforms: torch.nn.Module,
+    transforms: torch.nn.Module | None,
     local_rank: int,
     cfg: MainConfig,
 ) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:

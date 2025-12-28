@@ -1,6 +1,7 @@
 import logging
 from typing import Any
 from src.pipnet_utils import TrainingWrapper
+import inspect
 import torch
 import torch.nn as nn
 from src.models.codebook_wrappers import CNNCodebookWrapper
@@ -10,11 +11,58 @@ from torchmetrics import Accuracy
 logger = logging.getLogger(__name__)
 
 
+def _apply_batch_transforms(
+    transforms: object | None,
+    images: torch.Tensor,
+    labels: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply optional batch-level transforms.
+
+    Supports either:
+    - callables taking (images, labels) -> (images, labels)
+    - callables taking (images) -> images
+
+    This makes the training loop robust to users passing simple 1-arg modules
+    like nn.Identity() when mixup/cutmix is disabled.
+    """
+
+    if transforms is None:
+        return images, labels
+
+    # Prefer inspecting .forward for nn.Module instances (gives the real arity).
+    try:
+        if isinstance(transforms, nn.Module):
+            sig = inspect.signature(transforms.forward)  # bound method
+        else:
+            sig = inspect.signature(transforms)  # type: ignore[arg-type]
+        positional = [
+            p
+            for p in sig.parameters.values()
+            if p.kind
+            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        wants_labels = len(positional) >= 2
+    except (TypeError, ValueError):
+        # If we can't introspect, try the 2-arg convention first.
+        wants_labels = True
+
+    if wants_labels:
+        out = transforms(images, labels)  # type: ignore[misc]
+    else:
+        out = transforms(images)  # type: ignore[misc]
+
+    if isinstance(out, tuple) and len(out) == 2:
+        return out[0], out[1]
+
+    # images-only transform
+    return out, labels  # type: ignore[return-value]
+
+
 def train_epoch_cosine_codebook(
     model: nn.Module,
     train_dataloader: torch.utils.data.DataLoader,
     num_classes: int,
-    transforms: torch.nn.Module,
+    transforms: torch.nn.Module | None,
     optimizers: list[torch.optim.Optimizer],
     schedulers: list[torch.optim.lr_scheduler._LRScheduler],
     criterion: nn.Module,
@@ -29,7 +77,7 @@ def train_epoch_cosine_codebook(
         model (nn.Module): Model with a codebook
         train_dataloader (torch.utils.data.DataLoader): DataLoader for training data
         num_classes (int): Number of classes in the dataset
-        transforms (torch.nn.Module): Transformations to apply to the input data
+        transforms (torch.nn.Module | None): Transformations to apply to the input data
         optimizers (list[torch.optim.Optimizer]): List of optimizers to use
         schedulers (list[torch.optim.lr_scheduler._LRScheduler]): List of schedulers to use
         criterion (nn.Module): Loss function to use
@@ -50,7 +98,11 @@ def train_epoch_cosine_codebook(
 
     for batch, (images, labels) in enumerate(train_dataloader):
         images, labels = images.to(device), labels.to(device)
-        transformed_images, transformed_labels = transforms(images, labels)
+        transformed_images, transformed_labels = _apply_batch_transforms(
+            transforms=transforms,
+            images=images,
+            labels=labels,
+        )
 
         for optimizer in optimizers:
             optimizer.zero_grad()
@@ -192,10 +244,11 @@ def extract_features_from_backbone(
         for batch, (images, labels) in enumerate(dataloader):
             images, labels = images.to(device), labels.to(device)
 
-            if transforms is not None:
-                transformed_images, _ = transforms(images, labels)
-            else:
-                transformed_images, _ = images, labels
+            transformed_images, _ = _apply_batch_transforms(
+                transforms=transforms,
+                images=images,
+                labels=labels,
+            )
 
             features = feature_backbone(transformed_images)
             all_features.append(features.cpu())
@@ -271,7 +324,11 @@ def train_epoch(
 
     for i, (images, labels) in enumerate(train_dataloader):
         images, labels = images.to(device), labels.to(device)
-        transformed_images, transformed_labels = transforms(images, labels)
+        transformed_images, transformed_labels = _apply_batch_transforms(
+            transforms=transforms,
+            images=images,
+            labels=labels,
+        )
 
         for optimizer in optimizers:
             optimizer.zero_grad()
@@ -319,7 +376,11 @@ def train_epoch_ema_codebook(
 
     for batch, (images, labels) in enumerate(train_dataloader):
         images, labels = images.to(device), labels.to(device)
-        transformed_images, transformed_labels = transforms(images, labels)
+        transformed_images, transformed_labels = _apply_batch_transforms(
+            transforms=transforms,
+            images=images,
+            labels=labels,
+        )
 
         # Forward pass
         logits, codebook_loss = model(transformed_images)
@@ -422,7 +483,11 @@ def train_epoch_pipnet(
 
     for i, (images, labels) in enumerate(train_dataloader):
         images, labels = images.to(device), labels.to(device)
-        transformed_images, transformed_labels = transforms(images, labels)
+        transformed_images, transformed_labels = _apply_batch_transforms(
+            transforms=transforms,
+            images=images,
+            labels=labels,
+        )
 
         optimizer.zero_grad()
 

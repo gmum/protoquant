@@ -4,7 +4,7 @@ from datetime import datetime
 import uuid
 
 from src.pipnet_utils import TrainingWrapper, build_pipnet_model
-from src.datasets.transforms import get_default_image_transforms, get_deit_transforms
+from src.datasets.transforms import get_default_image_transforms, get_deit_transforms, get_raw_tensor_transforms
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -100,7 +100,10 @@ def prepare_and_train(
     logger.info(f"[Rank {local_rank}] Device: {device}")
 
     # Data
-    if cfg.dataset.use_deit_transforms:
+    if cfg.dataset.use_raw_transforms:
+        resize = 224 if "vit" in cfg.model.name.lower() else None
+        train_transform, val_transform = get_raw_tensor_transforms(resize=resize)
+    elif cfg.dataset.use_deit_transforms:
         train_transform, val_transform = get_deit_transforms(is_precropped=(cfg.dataset.name == "cub200"))
     else:
         train_transform, val_transform = get_default_image_transforms(
@@ -189,17 +192,21 @@ def prepare_and_train(
     logger.info(f"Scheduler: {scheduler}")
 
     # Criterion and transforms
-    mixup_fn = Mixup(
-        mixup_alpha=0.8,
-        cutmix_alpha=1.0,
-        cutmix_minmax=None,
-        prob=1.0,
-        switch_prob=0.5,
-        mode='batch',
-        label_smoothing=cfg.training.label_smoothing,
-        num_classes=cfg.dataset.num_classes
-    )
-    criterion = SoftTargetCrossEntropy()
+    if cfg.training.use_mixup:
+        mixup_fn = Mixup(
+            mixup_alpha=0.8,
+            cutmix_alpha=1.0,
+            cutmix_minmax=None,
+            prob=1.0,
+            switch_prob=0.5,
+            mode='batch',
+            label_smoothing=cfg.training.label_smoothing,
+            num_classes=cfg.dataset.num_classes
+        )
+        criterion: nn.Module = SoftTargetCrossEntropy()
+    else:
+        mixup_fn = None
+        criterion = nn.CrossEntropyLoss()
 
     # Train
     train_loop(
@@ -222,7 +229,7 @@ def train_loop(
     model: TrainingWrapper | nn.parallel.DistributedDataParallel,
     cfg: PipNetConfig,
     train_dataloader: torch.utils.data.DataLoader,
-    train_transforms: torch.nn.Module,
+    train_transforms: Mixup | None,
     val_dataloader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler,
@@ -248,7 +255,7 @@ def train_loop(
         train_epoch_pipnet(
             model=model,
             train_dataloader=train_dataloader,
-            transforms=train_transforms,
+            transforms=train_transforms, # pyright: ignore[reportArgumentType]
             optimizer=optimizer,
             criterion=criterion,
             device=device,

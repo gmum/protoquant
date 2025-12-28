@@ -6,13 +6,14 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from src.datasets.stanford_cars import get_stanford_cars
 from src.datasets.flowers102 import get_flowers102
+from src.datasets.funnybirds import FunnyBirdsClassification, get_funnybirds
 
 from torchvision.datasets import StanfordCars, Flowers102, ImageNet
 from src.datasets.cub import CUB200
 from src.datasets.stanford_dogs import StanfordDogs, get_stanford_dogs
 from torchvision.transforms.v2 import Compose
 
-AVAILABLE_DATASET = CUB200 | StanfordCars | Flowers102 | ImageNet | StanfordDogs
+AVAILABLE_DATASET = CUB200 | StanfordCars | Flowers102 | ImageNet | StanfordDogs | FunnyBirdsClassification
 
 DATASET_DICT = {
     "cub200": get_cub200,
@@ -20,6 +21,7 @@ DATASET_DICT = {
     "stanford_cars": get_stanford_cars,
     "flowers102": get_flowers102,
     "stanford_dogs": get_stanford_dogs,
+    "funnybirds": get_funnybirds,
 }
 
 def get_dataset(

@@ -29,6 +29,11 @@ class BaseDatasetConfig:
     
     use_deit_transforms: bool = False
 
+    # Some benchmarks (e.g. FunnyBirds) use raw tensors without ImageNet normalization
+    # and without additional augmentation. When enabled, training code should use
+    # identity transforms.
+    use_raw_transforms: bool = False
+
 
 @dataclass
 class CUB200Config(BaseDatasetConfig):
@@ -63,9 +68,25 @@ class StanfordDogsConfig(BaseDatasetConfig):
     num_classes: int = 120
 
 
+@dataclass
+class FunnyBirdsConfig(BaseDatasetConfig):
+    name: str = "funnybirds"
+    num_classes: int = 50
+
+    # FunnyBirds images are already 256x256 PNGs; official framework applies no transforms
+    resize_size: int | None = None
+    crop_size: int | None = None
+    random_erase: float | None = None
+    horizontal_flip: float | None = None
+    autoaugment: bool = False
+    use_deit_transforms: bool = False
+    use_raw_transforms: bool = True
+
+
 config_store = ConfigStore.instance()
 config_store.store(group="dataset", name="cub200", node=CUB200Config)
 config_store.store(group="dataset", name="imagenet1k", node=ImageNet1KConfig)
 config_store.store(group="dataset", name="stanford_cars", node=StanfordCarsConfig)
 config_store.store(group="dataset", name="flowers102", node=Flowers102Config)
 config_store.store(group="dataset", name="stanford_dogs", node=StanfordDogsConfig)
+config_store.store(group="dataset", name="funnybirds", node=FunnyBirdsConfig)

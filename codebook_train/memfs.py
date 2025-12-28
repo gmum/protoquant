@@ -178,6 +178,60 @@ def prepare_stanford_cars(target_dir: pathlib.Path, source_dir: pathlib.Path):
     logger.info(f"Stanford Cars is ready in {target_dir}.")
 
 
+def prepare_funnybirds(target_dir: pathlib.Path, source_dir: pathlib.Path):
+    """Prepares the FunnyBirds dataset.
+
+    The FunnyBirds framework expects a directory structure like:
+      FunnyBirds/
+        dataset_train.json
+        dataset_test.json
+        classes.json
+        parts.json
+        train/<class_idx>/<000000.png>
+        test/<class_idx>/<000000.png>
+
+    This handler copies an existing FunnyBirds dataset from `source_dir`.
+    Downloads are intentionally disabled (cluster-friendly / reproducible).
+    """
+    folder_name = "FunnyBirds"
+    target_path, source_path = target_dir / folder_name, source_dir / folder_name
+
+    required_files = [
+        "dataset_train.json",
+        "dataset_test.json",
+        "classes.json",
+        "parts.json",
+    ]
+
+    def _has_required_files(path: pathlib.Path) -> bool:
+        return all((path / fname).is_file() for fname in required_files)
+
+    # A simple, robust "already prepared" check
+    if _has_required_files(target_path):
+        logger.info(f"FunnyBirds already exists in {target_path}.")
+        return
+
+    logger.info(f"Dataset not found in target, checking source dir: {source_dir}")
+
+    # Support both common source layouts:
+    # 1) source_dir/FunnyBirds/<files>
+    # 2) source_dir/<files>
+    if _has_required_files(source_path):
+        copy_dataset(source_path, target_path)
+        logger.info(f"FunnyBirds is ready in {target_path}.")
+        return
+
+    if _has_required_files(source_dir):
+        copy_dataset(source_dir, target_path)
+        logger.info(f"FunnyBirds is ready in {target_path}.")
+        return
+
+    raise FileNotFoundError(
+        "FunnyBirds not found in source_dir and downloads are disabled. "
+        f"Expected either: {source_path} or {source_dir} (containing {', '.join(required_files)})."
+    )
+
+
 # --- Main Dispatcher ---
 
 def main():
@@ -191,7 +245,7 @@ def main():
         "--dataset", type=str, required=True,
         choices=[
             "imagenet1k", "cifar10", "cifar100", "cub200",
-            "stanford_cars", "flowers102", "stanford_dogs"
+            "stanford_cars", "flowers102", "stanford_dogs", "funnybirds"
         ],
         help="Name of the dataset to prepare.",
     )
@@ -210,6 +264,7 @@ def main():
         "stanford_cars": prepare_stanford_cars,
         "flowers102": prepare_flowers102,
         "stanford_dogs": prepare_stanford_dogs,
+        "funnybirds": prepare_funnybirds,
     }
 
     try:

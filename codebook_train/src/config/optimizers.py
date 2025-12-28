@@ -29,7 +29,8 @@ class AdamWOptimizerConfig(BaseOptimizerConfig):
 class SGDOptimizerConfig(BaseOptimizerConfig):
     _target_: str = f"{SGD.__module__}.{SGD.__qualname__}"
     momentum: float = 0.9
-    weight_decay: float = 0.0
+    weight_decay: float = 1e-4
+    nesterov: bool = True
 
 
 config_store = ConfigStore.instance()

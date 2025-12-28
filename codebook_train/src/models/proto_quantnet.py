@@ -74,6 +74,7 @@ class ProtoQuantNet(nn.Module):
         bias: bool = False,
         classifier_sparsity_lambda: float = 0.0,
         freeze_backbone: bool = True,
+        use_pipnet_objective: bool = False,
     ) -> None:
         super().__init__()
         
@@ -81,6 +82,7 @@ class ProtoQuantNet(nn.Module):
         self.num_classes = num_classes
         self.temperature = temperature
         self.classifier_sparsity_lambda = classifier_sparsity_lambda
+        self.use_pipnet_objective = use_pipnet_objective
         
         self.pool_layer = nn.Sequential(
             nn.AdaptiveMaxPool2d(output_size=(1, 1)),
@@ -124,7 +126,14 @@ class ProtoQuantNet(nn.Module):
         features = self.backbone(x)
         similarity_map = self._detect_prototypes(features)
         pooled_proto_scores = self.pool_layer(F.softmax(similarity_map / self.temperature, dim=1))
-        logits = self.classifier(pooled_proto_scores)
+
+        # PiPNet-like objective: use log((pω_c)^2 + 1) during training, else standard logits
+        if self.use_pipnet_objective and self.training:
+            # Ensure non-negative weights for interpretability
+            weights = torch.relu(self.classifier.weight)
+            logits = torch.log((F.linear(pooled_proto_scores, weights, self.classifier.bias) ** 2) + 1.0)
+        else:
+            logits = self.classifier(pooled_proto_scores)
         
         # Compute L1 sparsity loss on classifier weights if enabled
         classifier_sparsity_loss = None

@@ -34,3 +34,10 @@ def vit_b_16(**kwargs):
     # GAP version built on top of torchvision ViT-B/16
     from src.models.gap_vit_b_16 import vit_b_16 as build_gap_vit_b_16
     return build_gap_vit_b_16(**kwargs)
+
+
+@register_model
+def vit_b_16_timm(**kwargs):
+    # GAP version using timm's ViT-B/16 (compatible with funnybirds framework checkpoints)
+    from src.models.gap_vit_b_16_timm import vit_b_16_timm as build_gap_vit_b_16_timm
+    return build_gap_vit_b_16_timm(**kwargs)
