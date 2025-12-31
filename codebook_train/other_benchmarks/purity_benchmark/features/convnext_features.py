@@ -27,6 +27,6 @@ def convnext_tiny_13_features(pretrained=False, **kwargs):
     with torch.no_grad():
         model.avgpool = nn.Identity()
         model.classifier = nn.Identity()    
-        model = replace_convlayers_convnext(model, 300) 
-    
+        model = replace_convlayers_convnext(model, 300)
+
     return model
