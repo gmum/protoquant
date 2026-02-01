@@ -30,6 +30,7 @@ def copy_dataset(source_path: pathlib.Path, target_path: pathlib.Path):
 
 # --- Dataset Preparation Logic ---
 
+
 def prepare_imagenet(target_dir: pathlib.Path, source_dir: pathlib.Path):
     """
     Prepares ImageNet by symlinking TARs from source and unpacking them in target.
@@ -39,17 +40,23 @@ def prepare_imagenet(target_dir: pathlib.Path, source_dir: pathlib.Path):
         logger.info(f"ImageNet already prepared in {target_dir}.")
         return
 
-    logger.warning("Preparing ImageNet. This will be very slow and consume >300GB disk space.")
+    logger.warning(
+        "Preparing ImageNet. This will be very slow and consume >300GB disk space."
+    )
     target_dir.mkdir(exist_ok=True, parents=True)
 
     train_tar_path = source_dir / "ILSVRC2012_img_train.tar"
     if not train_tar_path.exists():
-        raise FileNotFoundError(f"ImageNet training archive not found at {train_tar_path}.")
+        raise FileNotFoundError(
+            f"ImageNet training archive not found at {train_tar_path}."
+        )
 
     for tar_file, _ in ARCHIVE_META.values():
         source_file, target_file = source_dir / tar_file, target_dir / tar_file
         if not source_file.exists():
-             raise FileNotFoundError(f"Required ImageNet archive not found: {source_file}")
+            raise FileNotFoundError(
+                f"Required ImageNet archive not found: {source_file}"
+            )
         if not target_file.exists():
             target_file.symlink_to(source_file)
 
@@ -234,18 +241,38 @@ def prepare_funnybirds(target_dir: pathlib.Path, source_dir: pathlib.Path):
 
 # --- Main Dispatcher ---
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Prepare a dataset by copying from a source directory or downloading.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("--target_dir", type=str, required=True, help="Directory to place the final dataset.")
-    parser.add_argument("--source_dir", type=str, required=True, help="Directory with existing datasets to copy.")
     parser.add_argument(
-        "--dataset", type=str, required=True,
+        "--target_dir",
+        type=str,
+        required=True,
+        help="Directory to place the final dataset.",
+    )
+    parser.add_argument(
+        "--source_dir",
+        type=str,
+        required=True,
+        help="Directory with existing datasets to copy.",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        required=True,
         choices=[
-            "imagenet1k", "cifar10", "cifar100", "cub200",
-            "stanford_cars", "flowers102", "stanford_dogs", "funnybirds"
+            "imagenet1k",
+            "cifar10",
+            "cifar100",
+            "cub200",
+            "stanford_cars",
+            "flowers102",
+            "stanford_dogs",
+            "funnybirds",
+            "copy",
         ],
         help="Name of the dataset to prepare.",
     )
@@ -265,6 +292,7 @@ def main():
         "flowers102": prepare_flowers102,
         "stanford_dogs": prepare_stanford_dogs,
         "funnybirds": prepare_funnybirds,
+        "copy": lambda t, s: copy_dataset(s, t),
     }
 
     try:

@@ -1,9 +1,9 @@
 import os
 import pandas as pd
 from torchvision.datasets import VisionDataset
-import torchvision.io as io
 from torchvision.transforms.v2 import Compose
 from PIL import Image
+
 
 class CUB200(VisionDataset):
     def __init__(self, root, train=True, transform=None, target_transform=None):

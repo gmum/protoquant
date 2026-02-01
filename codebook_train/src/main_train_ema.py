@@ -24,11 +24,18 @@ from torchvision.transforms import v2 as transforms_v2
 
 import warnings
 
-warnings.filterwarnings(
-    "ignore",
-    message=".*UnsupportedFieldAttributeWarning.*",
-    module="pydantic._internal._generate_schema",
-)
+try:
+    from pydantic.warnings import UnsupportedFieldAttributeWarning
+except Exception:  # pragma: no cover - best-effort fallback
+    UnsupportedFieldAttributeWarning = None
+
+if UnsupportedFieldAttributeWarning is not None:
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+else:
+    warnings.filterwarnings(
+        "ignore",
+        message=".*UnsupportedFieldAttributeWarning.*",
+    )
 
 
 logger = logging.getLogger(__name__)

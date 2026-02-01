@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True, frozen=True)
 class ProtoQuantOutput:
     """Output from ProtoQuantNet forward pass.
-    
+
     Attributes:
         logits: Class predictions (B, num_classes)
         pooled_proto_scores: Pooled prototype activations (B, num_prototypes)
@@ -28,18 +28,18 @@ class ProtoQuantOutput:
 
 class PrototypeClassifier(nn.Module):
     """Prototype-based classifier with non-negative weights for interpretability.
-    
+
     Args:
         fan_in (int): Input dimension.
         fan_out (int): Output dimension.
         bias (bool): Whether to include bias term. Defaults to False.
     """
-    
+
     def __init__(self, fan_in: int, fan_out: int, bias: bool = False) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.empty((fan_out, fan_in)))
         nn.init.normal_(self.weight, mean=1.0, std=0.1)
-        
+
         if bias:
             self.bias = nn.Parameter(torch.zeros(fan_out))
         else:
@@ -51,7 +51,7 @@ class PrototypeClassifier(nn.Module):
 
 class ProtoQuantNet(nn.Module):
     """Unified quantized prototype network combining backbone, codebook, and classifier.
-    
+
     Args:
         backbone (nn.Module): Feature extraction network (CNN or ViT).
         codebook (CodebookBase): Codebook module satisfying CodebookBase.
@@ -61,9 +61,9 @@ class ProtoQuantNet(nn.Module):
         classifier_sparsity_lambda (float): Regularization strength to encourage sparse
             prototype usage in classifier. Set to 0 to disable. Defaults to 0.
     """
-    
+
     _EPSILON: float = 1e-6  # Numerical stability constant
-    
+
     def __init__(
         self,
         backbone: nn.Module,
@@ -77,13 +77,13 @@ class ProtoQuantNet(nn.Module):
         use_pipnet_objective: bool = False,
     ) -> None:
         super().__init__()
-        
+
         self.backbone = backbone
         self.num_classes = num_classes
         self.temperature = temperature
         self.classifier_sparsity_lambda = classifier_sparsity_lambda
         self.use_pipnet_objective = use_pipnet_objective
-        
+
         self.pool_layer = nn.Sequential(
             nn.AdaptiveMaxPool2d(output_size=(1, 1)),
             nn.Flatten(),
@@ -108,39 +108,50 @@ class ProtoQuantNet(nn.Module):
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
-        logger.info(f"ProtoQuantNet: {self.num_prototypes} prototypes, {num_classes} classes, "
-                   f"sparsity lambda: {classifier_sparsity_lambda}")
+        logger.info(
+            f"ProtoQuantNet: {self.num_prototypes} prototypes, {num_classes} classes, "
+            f"sparsity lambda: {classifier_sparsity_lambda}"
+        )
 
-    def forward(self, x: torch.Tensor, return_similarity_map: bool = False) -> ProtoQuantOutput:
+    def forward(
+        self, x: torch.Tensor, return_similarity_map: bool = False
+    ) -> ProtoQuantOutput:
         """Forward pass through backbone, prototype detection, and classification.
-        
+
         Args:
             x (torch.Tensor): Input images of shape (B, C, H, W).
             return_similarity_map (bool): Whether to return spatial similarity map.
                 Defaults to False.
-        
+
         Returns:
             ProtoQuantOutput: Output containing logits, pooled_proto_scores,
                 and optionally similarity_map and classifier_sparsity_loss.
         """
         features = self.backbone(x)
         similarity_map = self._detect_prototypes(features)
-        pooled_proto_scores = self.pool_layer(F.softmax(similarity_map / self.temperature, dim=1))
+        pooled_proto_scores = self.pool_layer(
+            F.softmax(similarity_map / self.temperature, dim=1)
+        )
 
         # PiPNet-like objective: use log((pω_c)^2 + 1) during training, else standard logits
         if self.use_pipnet_objective and self.training:
             # Ensure non-negative weights for interpretability
             weights = torch.relu(self.classifier.weight)
-            logits = torch.log((F.linear(pooled_proto_scores, weights, self.classifier.bias) ** 2) + 1.0)
+            logits = torch.log(
+                (F.linear(pooled_proto_scores, weights, self.classifier.bias) ** 2)
+                + 1.0
+            )
         else:
             logits = self.classifier(pooled_proto_scores)
-        
+
         # Compute L1 sparsity loss on classifier weights if enabled
         classifier_sparsity_loss = None
         if self.classifier_sparsity_lambda > 0:
             positive_weights = torch.relu(self.classifier.weight)
-            classifier_sparsity_loss = self.classifier_sparsity_lambda * positive_weights.sum()
-        
+            classifier_sparsity_loss = (
+                self.classifier_sparsity_lambda * positive_weights.sum()
+            )
+
         return ProtoQuantOutput(
             logits=logits,
             pooled_proto_scores=pooled_proto_scores,
@@ -150,15 +161,15 @@ class ProtoQuantNet(nn.Module):
 
     def _detect_prototypes(self, x: torch.Tensor) -> torch.Tensor:
         """Compute cosine similarity between features and codebook prototypes.
-        
+
         Args:
             x (torch.Tensor): Feature tensor of shape (B, C, H, W) or (B, N, D).
-        
+
         Returns:
             torch.Tensor: Similarity map of shape (B, num_prototypes, H, W).
         """
         input_ndim = x.ndim
-        
+
         if input_ndim == 4:
             # CNN features: (B, C, H, W)
             B, C, H, W = x.shape
@@ -171,11 +182,13 @@ class ProtoQuantNet(nn.Module):
                 x = x[:, 1:, :]
                 N -= 1
             x_flat = x.reshape(-1, D)
-            
+
             # Infer spatial dimensions from token count
-            side_len = int(N ** 0.5)
+            side_len = int(N**0.5)
             if side_len * side_len != N:
-                raise ValueError(f"ViT features must have square number of tokens, got {N}")
+                raise ValueError(
+                    f"ViT features must have square number of tokens, got {N}"
+                )
             H = W = side_len
         else:
             raise ValueError(f"Expected 3D or 4D tensor, got {input_ndim}D")
@@ -184,69 +197,143 @@ class ProtoQuantNet(nn.Module):
         x_unit = x_flat / (x_flat.norm(dim=-1, keepdim=True) + self._EPSILON)
         c_unit = self.codes / (self.codes.norm(dim=-1, keepdim=True) + self._EPSILON)
         similarity = x_unit @ c_unit.t()
-        
+
         return similarity.view(B, H, W, self.num_prototypes).permute(0, 3, 1, 2)
 
     def calculate_local_size(self, threshold: float = 0.1) -> torch.Tensor:
         """Calculate number of prototypes with weight > threshold for each class.
-        
+
         Args:
             threshold (float): Minimum weight to count a prototype. Defaults to 0.1.
-        
+
         Returns:
             torch.Tensor: Number of significant prototypes per class, shape (num_classes,).
         """
         weights = torch.relu(self.classifier.weight.detach())
         return (weights > threshold).sum(dim=1)
-    
+
     def get_prototype_importance(self) -> torch.Tensor:
         """Calculate average weight per prototype across all classes.
-        
+
         Returns:
             torch.Tensor: Importance score per prototype, shape (num_prototypes,).
         """
         return torch.relu(self.classifier.weight.detach()).mean(dim=0)
-    
+
     def limit_prototypes(self, k: int) -> int:
         """Limit classifier to use only top-k prototypes per class.
-        
+
         Masks classifier weights to keep only the k highest-weighted prototypes
         for each class, setting all other weights to zero. This improves
         interpretability by reducing prototype usage while maintaining performance.
-        
+
         Args:
             k (int): Number of top prototypes to keep per class.
-        
+
         Returns:
             int: Number of unique prototypes remaining active after limiting.
-        
+
         Raises:
             ValueError: If k is less than 1.
         """
         if k < 1:
             raise ValueError(f"k must be at least 1, got {k}")
-        
+
         if k > self.num_prototypes:
-            logger.warning(f"k={k} > num_prototypes={self.num_prototypes}, no limiting applied")
+            logger.warning(
+                f"k={k} > num_prototypes={self.num_prototypes}, no limiting applied"
+            )
             return self.num_prototypes
-        
+
         with torch.no_grad():
             original_weights = self.classifier.weight.data.clone()
             positive_weights = torch.relu(original_weights)
-            
+
             # Get top-k indices per class
             _, top_k_indices = torch.topk(positive_weights, k=k, dim=1)
-            
+
             # Create binary mask
             mask = torch.zeros_like(original_weights)
             mask.scatter_(1, top_k_indices, 1.0)
-            
+
             # Apply mask to weights
             self.classifier.weight.data = original_weights * mask
-            
+
             # Count unique active prototypes
             unique_active = int(mask.any(dim=0).sum().item())
-            logger.info(f"Limited to top-{k} prototypes per class: "
-                       f"{unique_active}/{self.num_prototypes} prototypes remain active")
-            
+            logger.info(
+                f"Limited to top-{k} prototypes per class: "
+                f"{unique_active}/{self.num_prototypes} prototypes remain active"
+            )
+
             return unique_active
+
+    def prune_inactive_prototypes(self, min_weight: float = 0.0) -> int:
+        """Physically remove prototypes unused by the classifier.
+
+        This shrinks the codebook (`codes`) and the classifier weight matrix so
+        subsequent prototype detection and softmax are faster.
+
+        A prototype is considered *active* if any class has a (ReLU'ed) classifier
+        weight strictly greater than `min_weight` for that prototype.
+
+        Args:
+            min_weight: Minimum positive classifier weight to keep a prototype.
+                Defaults to 0.0 (keeps any prototype with weight > 0).
+
+        Returns:
+            The number of remaining (active) prototypes.
+        """
+
+        if min_weight < 0:
+            raise ValueError(f"min_weight must be >= 0, got {min_weight}")
+
+        with torch.no_grad():
+            weights = torch.relu(self.classifier.weight.detach())  # (C, P)
+            active_mask = (weights > float(min_weight)).any(dim=0)  # (P,)
+            active_indices = active_mask.nonzero(as_tuple=False).flatten()
+
+            old_p = int(self.num_prototypes)
+            new_p = int(active_indices.numel())
+
+            if new_p == 0:
+                logger.warning(
+                    "Prune requested but no active prototypes found (min_weight=%s); keeping original codebook.",
+                    min_weight,
+                )
+                return old_p
+
+            if new_p == old_p:
+                return old_p
+
+            # --- Shrink codes ---
+            new_codes = self.codes.index_select(0, active_indices.to(self.codes.device))
+
+            # Preserve buffer vs parameter behavior.
+            if "codes" in self._parameters:
+                requires_grad = bool(self._parameters["codes"].requires_grad)  # type: ignore[union-attr]
+                del self._parameters["codes"]
+                self.codes = nn.Parameter(new_codes, requires_grad=requires_grad)
+            else:
+                if "codes" in self._buffers:
+                    del self._buffers["codes"]
+                self.register_buffer("codes", new_codes)
+
+            # --- Shrink classifier weights (keep same bias) ---
+            old_weight = self.classifier.weight.detach()
+            new_weight = old_weight.index_select(
+                1, active_indices.to(old_weight.device)
+            )
+            self.classifier.weight = nn.Parameter(
+                new_weight, requires_grad=bool(self.classifier.weight.requires_grad)
+            )
+
+            self.num_prototypes = new_p
+
+            logger.info(
+                "Pruned inactive prototypes: %d -> %d active (min_weight=%s)",
+                old_p,
+                new_p,
+                min_weight,
+            )
+            return new_p

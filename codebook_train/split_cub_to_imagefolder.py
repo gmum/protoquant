@@ -24,14 +24,13 @@ import os
 import argparse
 import shutil
 import pandas as pd
-from pathlib import Path
 from tqdm import tqdm
 
 
 def split_cub_to_imagefolder(input_dir: str, output_dir: str, copy: bool = True):
     """
     Splits CUB-200-2011 into train/test ImageFolder structure.
-    
+
     Args:
         input_dir: Path to CUB dataset (should contain CUB_200_2011/ subfolder or be the CUB_200_2011 folder itself)
         output_dir: Path where train/ and test/ folders will be created
@@ -50,48 +49,50 @@ def split_cub_to_imagefolder(input_dir: str, output_dir: str, copy: bool = True)
             f"Could not find CUB-200-2011 dataset in {input_dir}. "
             "Expected either 'CUB_200_2011/' subfolder or images.txt file."
         )
-    
+
     # Check required files exist
     images_txt = os.path.join(cub_root, "images.txt")
     split_txt = os.path.join(cub_root, "train_test_split.txt")
     images_dir = os.path.join(cub_root, "images")
-    
+
     if not all(os.path.exists(p) for p in [images_txt, split_txt, images_dir]):
         raise FileNotFoundError(
             f"Missing required files in {cub_root}. "
             "Need: images.txt, train_test_split.txt, and images/ folder."
         )
-    
+
     print(f"Reading CUB-200-2011 from: {cub_root}")
     print(f"Output directory: {output_dir}")
-    
+
     # Load metadata
     image_paths_df = pd.read_csv(images_txt, sep=" ", names=["img_id", "path"])
     split_df = pd.read_csv(split_txt, sep=" ", names=["img_id", "is_train"])
-    
+
     # Merge
     data = image_paths_df.merge(split_df, on="img_id")
-    
+
     # Create output directories
     train_dir = os.path.join(output_dir, "train")
     test_dir = os.path.join(output_dir, "test")
     os.makedirs(train_dir, exist_ok=True)
     os.makedirs(test_dir, exist_ok=True)
-    
+
     # Process each image
     train_count, test_count = 0, 0
-    
+
     for _, row in tqdm(data.iterrows(), total=len(data), desc="Splitting dataset"):
-        img_path = row["path"]  # e.g., "001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg"
+        img_path = row[
+            "path"
+        ]  # e.g., "001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg"
         is_train = row["is_train"] == 1
-        
+
         # Extract class folder and filename
         class_folder = os.path.dirname(img_path)
         filename = os.path.basename(img_path)
-        
+
         # Source path
         src = os.path.join(images_dir, img_path)
-        
+
         # Destination path
         if is_train:
             dest_dir = os.path.join(train_dir, class_folder)
@@ -99,18 +100,18 @@ def split_cub_to_imagefolder(input_dir: str, output_dir: str, copy: bool = True)
         else:
             dest_dir = os.path.join(test_dir, class_folder)
             test_count += 1
-        
+
         os.makedirs(dest_dir, exist_ok=True)
         dest = os.path.join(dest_dir, filename)
-        
+
         # Copy or symlink
         if not os.path.exists(dest):
             if copy:
                 shutil.copy2(src, dest)
             else:
                 os.symlink(os.path.abspath(src), dest)
-    
-    print(f"\nDone!")
+
+    print("\nDone!")
     print(f"  Train images: {train_count}")
     print(f"  Test images:  {test_count}")
     print(f"\nImageFolder structure created at: {output_dir}")
@@ -140,6 +141,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Create symlinks instead of copying files (faster, saves disk space)",
     )
-    
+
     args = parser.parse_args()
     split_cub_to_imagefolder(args.input_dir, args.output_dir, copy=not args.symlink)

@@ -89,7 +89,9 @@ def _extract_state_dict(ckpt: object) -> dict[str, torch.Tensor]:
                     break
 
             # 4) Nested dict layouts (rare but seen)
-            if not isinstance(state_dict_obj, dict) and isinstance(ckpt.get("model"), dict):
+            if not isinstance(state_dict_obj, dict) and isinstance(
+                ckpt.get("model"), dict
+            ):
                 nested = ckpt["model"]
                 if "state_dict" in nested and isinstance(nested["state_dict"], dict):
                     state_dict_obj = nested["state_dict"]
@@ -112,13 +114,15 @@ def _extract_state_dict(ckpt: object) -> dict[str, torch.Tensor]:
         cleaned_key = key
         for prefix in ("module.", "model."):
             if cleaned_key.startswith(prefix):
-                cleaned_key = cleaned_key[len(prefix):]
+                cleaned_key = cleaned_key[len(prefix) :]
         cleaned[cleaned_key] = value
 
     return cleaned
 
 
-def _remap_vit_norm_keys(state_dict: dict[str, torch.Tensor], model: nn.Module) -> dict[str, torch.Tensor]:
+def _remap_vit_norm_keys(
+    state_dict: dict[str, torch.Tensor], model: nn.Module
+) -> dict[str, torch.Tensor]:
     """Remap ViT normalization layer keys between 'norm' and 'fc_norm'.
 
     When timm ViT models use global_pool='avg', the final layer norm is named
@@ -180,7 +184,14 @@ def construct_model(cfg: MainConfig, device: torch.device) -> nn.Module:
         global_pool=cfg.model.global_pool,
     )
 
-def construct_model_no_cfg(model_name: str, num_classes: int, device: torch.device, checkpoint_path: str | None = None, global_pool: str = "") -> nn.Module:
+
+def construct_model_no_cfg(
+    model_name: str,
+    num_classes: int,
+    device: torch.device,
+    checkpoint_path: str | None = None,
+    global_pool: str = "",
+) -> nn.Module:
     """Construct the model based on the provided parameters.
 
     Args:
@@ -221,9 +232,12 @@ def construct_model_no_cfg(model_name: str, num_classes: int, device: torch.devi
 
         model.load_state_dict(cleaned, strict=True)
     else:
-        logger.info("No checkpoint_path provided. The model will use its default initialization.")
+        logger.info(
+            "No checkpoint_path provided. The model will use its default initialization."
+        )
 
     return model
+
 
 def get_backbone(model: nn.Module) -> nn.Module:
     """Extracts the backbone (feature extractor) from a given model.
@@ -234,11 +248,11 @@ def get_backbone(model: nn.Module) -> nn.Module:
     Returns:
         nn.Module: The backbone of the model.
     """
-    
+
     adapter = guess_adapter(model)
     backbone = adapter.extract_features(model)
     logger.info(
         f"Using adapter {adapter.__class__.__name__} for model {model.__class__.__name__} to extract backbone."
     )
-    
+
     return backbone

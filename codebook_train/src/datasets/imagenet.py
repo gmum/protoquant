@@ -1,6 +1,6 @@
 from torchvision.datasets import ImageNet
-from src.datasets.transforms import get_default_image_transforms
 from torchvision.transforms.v2 import Compose
+
 
 def get_imagenet1k(
     path: str,

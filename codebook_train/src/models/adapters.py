@@ -177,6 +177,7 @@ class VisionTransformerAdapter(ModelAdapter):
 
 # --- TorchVision ViT (GAP wrapper) Adapter ---
 
+
 class TorchVisionViTAdapter(ModelAdapter):
     """
     Adapter for ViTWithGAP (torchvision backbone wrapped for GAP).

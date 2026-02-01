@@ -1,15 +1,23 @@
 import warnings
+
 # Silence noisy Pydantic v2 schema warnings emitted by third-party libs
-warnings.filterwarnings(
-    "ignore",
-    message=".*UnsupportedFieldAttributeWarning.*",
-    module="pydantic._internal._generate_schema",
-)
+try:
+    from pydantic.warnings import UnsupportedFieldAttributeWarning
+except Exception:  # pragma: no cover - best-effort fallback
+    UnsupportedFieldAttributeWarning = None
+
+if UnsupportedFieldAttributeWarning is not None:
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+else:
+    warnings.filterwarnings(
+        "ignore",
+        message=".*UnsupportedFieldAttributeWarning.*",
+    )
 
 from pathlib import Path
 from omegaconf import OmegaConf
 import torch
-from src.main_train_supervised import prepare_codebook_training
+from src.train_codebook import prepare_codebook_training
 from src.utils import (
     set_reproducibility,
 )

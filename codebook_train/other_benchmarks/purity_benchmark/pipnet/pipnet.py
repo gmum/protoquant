@@ -13,8 +13,8 @@ from ..features.resnet_features import (
 from ..features.convnext_features import (
     convnext_tiny_26_features,
     convnext_tiny_13_features,
+    convnext_tiny_7_features,
 )
-import torch
 from torch import Tensor
 
 
@@ -64,6 +64,7 @@ base_architecture_to_features = {
     "resnet152": resnet152_features,
     "convnext_tiny_26": convnext_tiny_26_features,
     "convnext_tiny_13": convnext_tiny_13_features,
+    "convnext_tiny_7": convnext_tiny_7_features,
 }
 
 

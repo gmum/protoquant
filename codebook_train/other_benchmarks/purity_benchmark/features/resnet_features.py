@@ -5,24 +5,29 @@ import os
 import copy
 
 model_urls = {
-    'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
-    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
-    'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
-    'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
-    'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
+    "resnet18": "https://download.pytorch.org/models/resnet18-5c106cde.pth",
+    "resnet34": "https://download.pytorch.org/models/resnet34-333f7ec4.pth",
+    "resnet50": "https://download.pytorch.org/models/resnet50-19c8e357.pth",
+    "resnet101": "https://download.pytorch.org/models/resnet101-5d3b4d8f.pth",
+    "resnet152": "https://download.pytorch.org/models/resnet152-b121ed2d.pth",
 }
 
-model_dir = './pretrained_models'
+model_dir = "./pretrained_models"
+
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=1, bias=False)
+    return nn.Conv2d(
+        in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False
+    )
+
 
 def conv3x3_nopad(in_planes, out_planes, stride=1):
     """3x3 convolution without padding"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=0, bias=False)
+    return nn.Conv2d(
+        in_planes, out_planes, kernel_size=3, stride=stride, padding=0, bias=False
+    )
+
 
 def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
@@ -123,11 +128,12 @@ class Bottleneck(nn.Module):
 
         return block_kernel_sizes, block_strides, block_paddings
 
+
 class ResNet_features(nn.Module):
-    '''
+    """
     the convolutional layers of ResNet
     the average pooling and final fully convolutional layer is removed
-    '''
+    """
 
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False):
         super(ResNet_features, self).__init__()
@@ -135,8 +141,7 @@ class ResNet_features(nn.Module):
         self.inplanes = 64
 
         # the first convolutional layer before the structured sequence of blocks
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -148,15 +153,23 @@ class ResNet_features(nn.Module):
         # the following layers, each layer is a sequence of blocks
         self.block = block
         self.layers = layers
-        self.layer1 = self._make_layer(block=block, planes=64, num_blocks=self.layers[0])
-        self.layer2 = self._make_layer(block=block, planes=128, num_blocks=self.layers[1], stride=2)
-        self.layer3 = self._make_layer(block=block, planes=256, num_blocks=self.layers[2], stride=1)
-        self.layer4 = self._make_layer(block=block, planes=512, num_blocks=self.layers[3], stride=1)
+        self.layer1 = self._make_layer(
+            block=block, planes=64, num_blocks=self.layers[0]
+        )
+        self.layer2 = self._make_layer(
+            block=block, planes=128, num_blocks=self.layers[1], stride=2
+        )
+        self.layer3 = self._make_layer(
+            block=block, planes=256, num_blocks=self.layers[2], stride=1
+        )
+        self.layer4 = self._make_layer(
+            block=block, planes=512, num_blocks=self.layers[3], stride=1
+        )
 
         # initialize the parameters
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -189,7 +202,9 @@ class ResNet_features(nn.Module):
 
         # keep track of every block's conv size, stride size, and padding size
         for each_block in layers:
-            block_kernel_sizes, block_strides, block_paddings = each_block.block_conv_info()
+            block_kernel_sizes, block_strides, block_paddings = (
+                each_block.block_conv_info()
+            )
             self.kernel_sizes.extend(block_kernel_sizes)
             self.strides.extend(block_strides)
             self.paddings.extend(block_paddings)
@@ -213,20 +228,23 @@ class ResNet_features(nn.Module):
         return self.kernel_sizes, self.strides, self.paddings
 
     def num_layers(self):
-        '''
+        """
         the number of conv layers in the network, not counting the number
         of bypass layers
-        '''
+        """
 
-        return (self.block.num_layers * self.layers[0]
-              + self.block.num_layers * self.layers[1]
-              + self.block.num_layers * self.layers[2]
-              + self.block.num_layers * self.layers[3]
-              + 1)
+        return (
+            self.block.num_layers * self.layers[0]
+            + self.block.num_layers * self.layers[1]
+            + self.block.num_layers * self.layers[2]
+            + self.block.num_layers * self.layers[3]
+            + 1
+        )
 
     def __repr__(self):
-        template = 'resnet{}_features'
+        template = "resnet{}_features"
         return template.format(self.num_layers() + 1)
+
 
 def resnet18_features(pretrained=False, **kwargs):
     """Constructs a ResNet-18 model.
@@ -235,9 +253,9 @@ def resnet18_features(pretrained=False, **kwargs):
     """
     model = ResNet_features(BasicBlock, [2, 2, 2, 2], **kwargs)
     if pretrained:
-        my_dict = model_zoo.load_url(model_urls['resnet18'], model_dir=model_dir)
-        my_dict.pop('fc.weight')
-        my_dict.pop('fc.bias')
+        my_dict = model_zoo.load_url(model_urls["resnet18"], model_dir=model_dir)
+        my_dict.pop("fc.weight")
+        my_dict.pop("fc.bias")
         model.load_state_dict(my_dict, strict=False)
     return model
 
@@ -249,26 +267,28 @@ def resnet34_features(pretrained=False, **kwargs):
     """
     model = ResNet_features(BasicBlock, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        my_dict = model_zoo.load_url(model_urls['resnet34'], model_dir=model_dir)
-        my_dict.pop('fc.weight')
-        my_dict.pop('fc.bias')
+        my_dict = model_zoo.load_url(model_urls["resnet34"], model_dir=model_dir)
+        my_dict.pop("fc.weight")
+        my_dict.pop("fc.bias")
         model.load_state_dict(my_dict, strict=False)
     return model
+
 
 def resnet50_features(pretrained=False, **kwargs):
     """Constructs a ResNet-50 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    
+
     model = ResNet_features(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        my_dict = model_zoo.load_url(model_urls['resnet50'], model_dir=model_dir)
-        my_dict.pop('fc.weight')
-        my_dict.pop('fc.bias')
+        my_dict = model_zoo.load_url(model_urls["resnet50"], model_dir=model_dir)
+        my_dict.pop("fc.weight")
+        my_dict.pop("fc.bias")
         model.load_state_dict(my_dict, strict=False)
-  
+
     return model
+
 
 def resnet50_features_inat(pretrained=False, **kwargs):
     """Constructs a ResNet-50 model.
@@ -277,28 +297,42 @@ def resnet50_features_inat(pretrained=False, **kwargs):
     """
     model = ResNet_features(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        #use BBN pretrained weights of the conventional learning branch (from BBN.iNaturalist2017.res50.180epoch.best_model.pth)
-        #https://openaccess.thecvf.com/content_CVPR_2020/papers/Zhou_BBN_Bilateral-Branch_Network_With_Cumulative_Learning_for_Long-Tailed_Visual_Recognition_CVPR_2020_paper.pdf
-        if not os.path.exists(os.path.join(os.path.join('features', 'state_dicts'), 'BBN.iNaturalist2017.res50.180epoch.best_model.pth')):
-            print("To use Resnet50 pretrained on iNaturalist, create a folder called state_dicts in the folder features, and download BBN.iNaturalist2017.res50.180epoch.best_model.pth to there from https://drive.google.com/drive/folders/1yHme1iFQy-Lz_11yZJPlNd9bO_YPKlEU.", flush=True)
-        model_dict = torch.load(os.path.join(os.path.join('features', 'state_dicts'), 'BBN.iNaturalist2017.res50.180epoch.best_model.pth'))
+        # use BBN pretrained weights of the conventional learning branch (from BBN.iNaturalist2017.res50.180epoch.best_model.pth)
+        # https://openaccess.thecvf.com/content_CVPR_2020/papers/Zhou_BBN_Bilateral-Branch_Network_With_Cumulative_Learning_for_Long-Tailed_Visual_Recognition_CVPR_2020_paper.pdf
+        if not os.path.exists(
+            os.path.join(
+                os.path.join("features", "state_dicts"),
+                "BBN.iNaturalist2017.res50.180epoch.best_model.pth",
+            )
+        ):
+            print(
+                "To use Resnet50 pretrained on iNaturalist, create a folder called state_dicts in the folder features, and download BBN.iNaturalist2017.res50.180epoch.best_model.pth to there from https://drive.google.com/drive/folders/1yHme1iFQy-Lz_11yZJPlNd9bO_YPKlEU.",
+                flush=True,
+            )
+        model_dict = torch.load(
+            os.path.join(
+                os.path.join("features", "state_dicts"),
+                "BBN.iNaturalist2017.res50.180epoch.best_model.pth",
+            )
+        )
         # rename last residual block from cb_block to layer4.2
         new_model = copy.deepcopy(model_dict)
         for k in model_dict.keys():
-            if k.startswith('module.backbone.cb_block'):
-                splitted = k.split('cb_block')
-                new_model['layer4.2'+splitted[-1]]=model_dict[k]
+            if k.startswith("module.backbone.cb_block"):
+                splitted = k.split("cb_block")
+                new_model["layer4.2" + splitted[-1]] = model_dict[k]
                 del new_model[k]
-            elif k.startswith('module.backbone.rb_block'):
+            elif k.startswith("module.backbone.rb_block"):
                 del new_model[k]
-            elif k.startswith('module.backbone.'):
-                splitted = k.split('backbone.')
-                new_model[splitted[-1]]=model_dict[k]
+            elif k.startswith("module.backbone."):
+                splitted = k.split("backbone.")
+                new_model[splitted[-1]] = model_dict[k]
                 del new_model[k]
-            elif k.startswith('module.classifier'):
+            elif k.startswith("module.classifier"):
                 del new_model[k]
         model.load_state_dict(new_model, strict=True)
     return model
+
 
 def resnet101_features(pretrained=False, **kwargs):
     """Constructs a ResNet-101 model.
@@ -307,9 +341,9 @@ def resnet101_features(pretrained=False, **kwargs):
     """
     model = ResNet_features(Bottleneck, [3, 4, 23, 3], **kwargs)
     if pretrained:
-        my_dict = model_zoo.load_url(model_urls['resnet101'], model_dir=model_dir)
-        my_dict.pop('fc.weight')
-        my_dict.pop('fc.bias')
+        my_dict = model_zoo.load_url(model_urls["resnet101"], model_dir=model_dir)
+        my_dict.pop("fc.weight")
+        my_dict.pop("fc.bias")
         model.load_state_dict(my_dict, strict=False)
     return model
 
@@ -321,8 +355,8 @@ def resnet152_features(pretrained=False, **kwargs):
     """
     model = ResNet_features(Bottleneck, [3, 8, 36, 3], **kwargs)
     if pretrained:
-        my_dict = model_zoo.load_url(model_urls['resnet152'], model_dir=model_dir)
-        my_dict.pop('fc.weight')
-        my_dict.pop('fc.bias')
+        my_dict = model_zoo.load_url(model_urls["resnet152"], model_dir=model_dir)
+        my_dict.pop("fc.weight")
+        my_dict.pop("fc.bias")
         model.load_state_dict(my_dict, strict=False)
     return model

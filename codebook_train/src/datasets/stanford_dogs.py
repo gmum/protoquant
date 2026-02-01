@@ -7,8 +7,8 @@ import scipy.io
 import torch
 import torch.utils.data as data
 from torchvision.datasets.utils import download_url, list_dir
-from src.datasets.transforms import get_default_image_transforms
 from torchvision.transforms.v2 import Compose
+
 
 class StanfordDogs(data.Dataset):
     """`Stanford Dogs <http://vision.stanford.edu/aditya86/ImageNetDogs/>`_ Dataset.
@@ -297,7 +297,6 @@ def get_stanford_dogs(
     Returns:
         tuple[Flowers102, Flowers102]: Train and validation datasets.
     """
- 
 
     train_dataset = StanfordDogs(
         root=path, train=True, transform=train_transform, download=True

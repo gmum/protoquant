@@ -21,6 +21,16 @@ PIP-Net is an interpretable and intuitive deep learning method for image classif
 ### Training PIP-Net
 PIP-Net can be trained by running `main.py` with arguments. Run `main.py --help` to see all the argument options. Recommended parameters per dataset are present in the `used_arguments.txt` file (usually corresponds to the default options). 
 
+#### Fair-comparison knobs (frozen-backbone baselines)
+This fork adds two CLI options that are useful when comparing against methods that keep the backbone frozen (e.g., quantization/codebook-prototype methods):
+
+- `--backbone_train_policy {all,none,last_stage}` controls which backbone parameters are allowed to train.
+  - `none`: freeze the entire backbone for all epochs.
+  - `last_stage`: train only the last stage (ConvNeXt: `features.7.2`; ResNet: `layer4.2`).
+- `--pipnet_head_only` forces **strict classifier-only training** in the second stage (no backbone fine-tuning and no add-on/prototype training).
+  - Intended for “fixed prototypes + trained linear head” baselines.
+  - Typically used with `--epochs_pretrain 0`.
+
 #### Training PIP-Net on your own data
 Want to train PIP-Net on another dataset? Add your dataset in ``util/data.py`` by creating a function ``get_yourdata`` with the desired data augmentation (that captures human perception of similarity), add it to the existing ``get_data`` function in ``util/data.py`` and give your dataset a name. Use ``--dataset your_dataset_name`` as argument to run PIP-Net on your dataset. 
 

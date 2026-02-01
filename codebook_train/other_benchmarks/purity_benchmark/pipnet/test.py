@@ -7,7 +7,6 @@ import torch.nn.functional as F
 from ..util.log import Log
 from ..util.func import topk_accuracy
 from sklearn.metrics import (
-    accuracy_score,
     roc_auc_score,
     balanced_accuracy_score,
     f1_score,

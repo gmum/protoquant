@@ -2,6 +2,7 @@
 from torchvision.datasets import StanfordCars
 from torchvision.transforms.v2 import Compose
 
+
 def get_stanford_cars(
     path: str,
     train_transform: Compose,

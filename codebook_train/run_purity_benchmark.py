@@ -1,4 +1,4 @@
-from purity_benchmark.start_purity import run_benchmark
+from other_benchmarks.purity_benchmark.main import main_entry
 
 if __name__ == "__main__":
-    run_benchmark()
+    main_entry()

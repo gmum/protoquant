@@ -1,4 +1,3 @@
-import pathlib
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +6,7 @@ from dataclasses import dataclass
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class PIPNetOutput:
@@ -55,7 +55,7 @@ class QuantizedPIPNetHead(nn.Module):
         normalize: bool = True,
         bias: bool = False,
         train_codebook: bool = False,
-        temperature: float = 0.1
+        temperature: float = 0.1,
     ):
         super().__init__()
         self.K = num_classes
@@ -86,7 +86,7 @@ class QuantizedPIPNetHead(nn.Module):
     @property
     def multiplier(self):
         return self.classifier.normalization_multiplier
-    
+
     def forward(self, x: Tensor) -> PIPNetOutput:
         sim_map = self.detect_protos(x)
         pooled_scores = self.pool(F.softmax(sim_map / self.temperature, dim=1))
@@ -94,11 +94,10 @@ class QuantizedPIPNetHead(nn.Module):
 
         # Return all the necessary tensors for analysis
         return PIPNetOutput(
-            proto_fmap=sim_map, # The crucial (B, P, H, W) similarity map
-            proto_fvec=pooled_scores, # The (B, P) pooled similarity vector
-            logits=logits # The (B, K) final class logits
+            proto_fmap=sim_map,  # The crucial (B, P, H, W) similarity map
+            proto_fvec=pooled_scores,  # The (B, P) pooled similarity vector
+            logits=logits,  # The (B, K) final class logits
         )
-
 
     def detect_protos(self, x):
         input_ndim = x.ndim
@@ -109,14 +108,16 @@ class QuantizedPIPNetHead(nn.Module):
         elif input_ndim == 3:  # ViT case: (B, N, D)
             B, N, D = x.shape
             # If there's a class token, remove it.
-            if N == 197 or N == 257: # Common for 224x224 and 256x256 ViTs
-                logger.debug(f"Removing CLS token from ViT features. Original num_tokens: {N}")
+            if N == 197 or N == 257:  # Common for 224x224 and 256x256 ViTs
+                logger.debug(
+                    f"Removing CLS token from ViT features. Original num_tokens: {N}"
+                )
                 x = x[:, 1:, :]
                 N = N - 1
-            
+
             # Reshape to (B*N, D)
             x_flat = x.reshape(-1, D)
-            
+
             # Calculate pseudo-height/width for reshaping later
             if N == 196:
                 side_len = 14
@@ -132,18 +133,20 @@ class QuantizedPIPNetHead(nn.Module):
                 )
             H, W = side_len, side_len
         else:
-            raise ValueError(f"Unsupported input tensor rank: {input_ndim}. Must be 3 or 4.")
+            raise ValueError(
+                f"Unsupported input tensor rank: {input_ndim}. Must be 3 or 4."
+            )
 
         # --- Core similarity calculation (same for both cases) ---
         c = self.codebook
-        
+
         if self.normalize:
             epsilon = 1e-6
             x_norm = x_flat.norm(dim=-1, keepdim=True)
             c_norm = c.norm(dim=-1, keepdim=True)
             x_unit = x_flat / (x_norm + epsilon)
             c_unit = c / (c_norm + epsilon)
-            sim = x_unit @ c_unit.t() # Cosine similarity
+            sim = x_unit @ c_unit.t()  # Cosine similarity
         else:
             # L2 distance squared, shaped as a similarity (higher is better)
             # -||x-c||^2 = - (x^2 - 2xc + c^2)

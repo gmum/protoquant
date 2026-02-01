@@ -1,100 +1,91 @@
-"""Benchmark-local adapter to make ProtoQuantNet present a PIPNet-like API.
-
-The adapter exposes the following PIPNet-like attributes/methods used by the
-purity benchmark code:
- - forward(x) -> (softmax_map, pooled_proto_scores, logits)
- - _num_prototypes (int)
- - _num_classes (int)
- - _classification (nn.Module with .weight and .bias referencing underlying classifier)
- - _multiplier (nn.Parameter)
- - calculate_local_size()
- - get_prototype_importance()
-
-This adapter intentionally keeps things minimal and benchmark-local.
-"""
-from __future__ import annotations
-
-from typing import Optional, Tuple
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.models.proto_quantnet import ProtoQuantNet
 
-class _ClassifierShim(nn.Module):
-    """Small shim to expose .weight and .bias attributes expected by benchmark code."""
 
-    def __init__(self, classifier: nn.Module):
+class _NonNegLinearProxy(nn.Module):
+    """A minimal NonNegLinear-compatible module.
+
+    The purity benchmark expects:
+    - .weight (Parameter)
+    - .bias (Parameter or None)
+    - .normalization_multiplier (Parameter)
+    and uses forward(x) -> F.linear(x, relu(weight), bias)
+    """
+
+    def __init__(self, weight: nn.Parameter, bias: nn.Parameter | None):
         super().__init__()
-        # Reuse the underlying parameters so that updates / state_dicts remain consistent.
-        # Assigning Parameter objects registers them on this module as well.
-        self.weight = classifier.weight
-        self.bias = getattr(classifier, "bias", None)
+        self.weight = weight
+        if bias is None:
+            self.register_parameter("bias", None)
+        else:
+            self.bias = bias
+
+        # The benchmark uses this name explicitly.
+        self.normalization_multiplier = nn.Parameter(torch.tensor([1.0]))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Provide a forward pass fallback in case something calls it directly.
-        if self.bias is None:
-            return F.linear(x, F.relu(self.weight))
-        else:
-            return F.linear(x, F.relu(self.weight), self.bias)
+        return F.linear(x, torch.relu(self.weight), self.bias)
 
 
 class ProtoQuantAdapter(nn.Module):
-    """Adapter that wraps a ProtoQuantNet and exposes a PIPNet-compatible API.
+    """Adapter that makes ProtoQuantNet look like PIPNet for purity benchmark code.
 
-    Notes:
-    - `forward(x)` returns (softmax_map, pooled_proto_scores, logits) similar to PIPNet.
-    - `softmax_map` is computed as softmax(similarity_map / temperature, dim=1).
-    - `_classification.weight` refers to the underlying classifier weights (Parameter).
-    - `_multiplier` is provided as a Parameter for code that expects it; default value 1.0.
+    It exposes the attributes used throughout the benchmark:
+    - _net, _add_on, _pool, _classification, _multiplier
+    - _num_classes, _num_prototypes
+
+    And its forward returns the PIPNet tuple:
+    (proto_features[B,P,H,W], pooled[B,P], out[B,C])
     """
 
-    def __init__(self, protoquant_model: "ProtoQuantNet") -> None:
+    def __init__(self, model: ProtoQuantNet, num_classes: int):
         super().__init__()
-        self.model = protoquant_model
+        self._protoquant = model
 
-        # Keep names similar to PIPNet expectations
-        self._num_prototypes = int(getattr(self.model, "num_prototypes"))
-        self._num_classes = int(getattr(self.model, "num_classes"))
+        # Match ProtoQuantNet activation temperature; critical for meaningful softmax
+        # when num_prototypes is large.
+        self._temperature = float(getattr(model, "temperature", 0.1))
 
-        # Expose a classification shim with .weight and .bias
-        self._classification = _ClassifierShim(self.model.classifier)
+        self._num_classes = int(num_classes)
+        self._num_prototypes = int(model.num_prototypes)
+        self._num_features = 0
 
-        # _multiplier is used by benchmark code (created as a Parameter so code can set requires_grad)
-        self._multiplier = nn.Parameter(torch.tensor(1.0))
+        # Provide PIPNet-like submodules/attributes.
+        self._net = model.backbone
+        self._add_on = nn.Identity()
+        self._pool = nn.Sequential(nn.AdaptiveMaxPool2d((1, 1)), nn.Flatten())
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return (softmax_map, pooled_proto_scores, logits).
+        # Proxy classification layer with expected attribute names.
+        # We use the same underlying weight/bias parameters as ProtoQuantNet.
+        self._classification = _NonNegLinearProxy(
+            model.classifier.weight, model.classifier.bias
+        )
+        self._multiplier = self._classification.normalization_multiplier
 
-        softmax_map: (B, P, H, W)
-        pooled_proto_scores: (B, P)
-        logits: (B, num_classes)
-        """
-        out = self.model(x, return_similarity_map=True)
+        # For benchmark compatibility: multiplier is treated as frozen in many paths.
+        self._multiplier.requires_grad = False
 
-        similarity_map = out.similarity_map
-        if similarity_map is None:
-            raise RuntimeError("ProtoQuantNet returned no similarity_map; ensure return_similarity_map=True")
+    def forward(self, xs: torch.Tensor, inference: bool = False):
+        # ProtoQuantNet can optionally return the spatial similarity map.
+        out = self._protoquant(xs, return_similarity_map=True)
+        if out.similarity_map is None:
+            raise RuntimeError(
+                "ProtoQuantNet did not return similarity_map; cannot run purity benchmark."
+            )
 
-        # Softmax over prototype/channel dimension to mimic PIPNet semantics
-        softmax_map = F.softmax(similarity_map / float(self.model.temperature), dim=1)
+        # Convert similarity map into PIPNet-like per-location prototype distribution.
+        # IMPORTANT: match ProtoQuantNet's computation: softmax(similarity / temperature).
+        # Using raw cosine similarities here would yield near-uniform maps for large P.
+        proto_features = torch.softmax(out.similarity_map / self._temperature, dim=1)
 
-        pooled = out.pooled_proto_scores
-        logits = out.logits if out.logits is not None else self._classification(pooled)
+        # Use the same pooling as the benchmark/PIPNet (adaptive max over spatial dims).
+        # This should match ProtoQuantNet.pooled_proto_scores when computed on proto_features.
+        pooled = self._pool(proto_features)
+        if inference:
+            pooled = torch.where(pooled < 0.1, 0.0, pooled)
 
-        return softmax_map, pooled, logits
-
-    # Delegate convenience methods
-    def calculate_local_size(self, threshold: float = 0.1) -> torch.Tensor:
-        return self.model.calculate_local_size(threshold)
-
-    def get_prototype_importance(self) -> torch.Tensor:
-        return self.model.get_prototype_importance()
-
-
-# Lightweight import guard for type checking / IDEs
-try:
-    # Import type only for hints; if src is unavailable this will not raise at runtime
-    from src.models.proto_quantnet import ProtoQuantNet  # type: ignore
-except Exception:
-    ProtoQuantNet = Optional[object]  # fallback for type checkers
+        logits = self._classification(pooled)
+        return proto_features, pooled, logits

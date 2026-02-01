@@ -1,4 +1,3 @@
-from typing import Tuple
 import torch
 import torch.nn as nn
 
@@ -10,18 +9,18 @@ logger = logging.getLogger(__name__)
 
 class TrainingWrapper(torch.nn.Module):
     """Wrapper to extract logits from ProtoQuantOutput for compatibility with training loops."""
-    
+
     def __init__(self, model_to_wrap: ProtoQuantNet):
         super().__init__()
         self.model_to_wrap = model_to_wrap
         self.last_out: ProtoQuantOutput | None = None
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass that returns only logits.
-        
+
         Args:
             x: Input tensor
-            
+
         Returns:
             Logits tensor for classification
         """
@@ -38,9 +37,10 @@ def _load_protoquant_from_checkpoint(
     train_codebook: bool = False,
     temperature: float = 0.1,
     classifier_sparsity_lambda: float = 0.0,
+    use_pipnet_objective: bool = False,
 ) -> ProtoQuantNet:
     """Load ProtoQuantNet model from a checkpoint.
-    
+
     Args:
         backbone: Feature extraction network
         checkpoint_path: Path to checkpoint file
@@ -49,14 +49,18 @@ def _load_protoquant_from_checkpoint(
         train_codebook: Whether prototypes should be trainable
         temperature: Temperature for softmax pooling
         classifier_sparsity_lambda: L1 regularization strength on classifier weights
-        
+        use_pipnet_objective: Whether to use PiPNet-like objective during training
+
     Returns:
         Loaded ProtoQuantNet model
     """
     logger.info(f"Loading ProtoQuantNet model from: {checkpoint_path}")
-    
+
     ckpt = torch.load(checkpoint_path, map_location=device)
-    
+    logger.info(
+        f"Checkpoint keys: {list(ckpt.keys()) if isinstance(ckpt, dict) else 'Not a dict'}"
+    )
+
     # Handle cases where the state_dict is nested under 'model' or 'state_dict'
     if isinstance(ckpt, dict):
         if "model" in ckpt:
@@ -75,15 +79,13 @@ def _load_protoquant_from_checkpoint(
         if any(k.startswith(p) for k in model_state_dict.keys()):
             logger.info(f"Stripping '{p}' prefix from state_dict keys.")
             model_state_dict = {
-                k[len(p):]: v 
-                for k, v in model_state_dict.items() 
-                if k.startswith(p)
+                k[len(p) :]: v for k, v in model_state_dict.items() if k.startswith(p)
             }
 
     # Extract codebook
     if "codes" not in model_state_dict:
         raise ValueError("Loaded model state_dict is missing 'codes' key.")
-    
+
     code_tensor = model_state_dict["codes"]
 
     # Build model
@@ -96,8 +98,9 @@ def _load_protoquant_from_checkpoint(
         bias=False,
         classifier_sparsity_lambda=classifier_sparsity_lambda,
         freeze_backbone=True,
+        use_pipnet_objective=use_pipnet_objective,
     ).to(device)
-    
+
     # Load weights
     incompatible_keys = model.load_state_dict(model_state_dict, strict=False)
     logger.info(f"Loaded state_dict. Incompatible keys: {incompatible_keys}")
@@ -113,9 +116,10 @@ def _build_protoquant_from_codebook(
     train_codebook: bool = False,
     temperature: float = 0.1,
     classifier_sparsity_lambda: float = 0.0,
+    use_pipnet_objective: bool = False,
 ) -> ProtoQuantNet:
     """Build ProtoQuantNet from backbone and codebook file.
-    
+
     Args:
         backbone: Feature extraction network
         codebook_path: Path to codebook tensor file
@@ -124,14 +128,15 @@ def _build_protoquant_from_codebook(
         train_codebook: Whether prototypes should be trainable
         temperature: Temperature for softmax pooling
         classifier_sparsity_lambda: L1 regularization strength on classifier weights
-        
+        use_pipnet_objective: Whether to use PiPNet-like objective during training
+
     Returns:
         New ProtoQuantNet model
     """
     logger.info(f"Building ProtoQuantNet from backbone and codebook: {codebook_path}")
-    
+
     ckpt = torch.load(codebook_path, map_location=device)
-    
+
     # Handle different ways the codebook might be saved
     if isinstance(ckpt, dict) and "embeddings.weight" in ckpt:
         code_tensor = ckpt["embeddings.weight"]
@@ -152,8 +157,9 @@ def _build_protoquant_from_codebook(
         bias=False,
         classifier_sparsity_lambda=classifier_sparsity_lambda,
         freeze_backbone=True,
+        use_pipnet_objective=use_pipnet_objective,
     ).to(device)
-    
+
     return model
 
 
@@ -167,6 +173,7 @@ def build_pipnet_model(
     temperature: float = 0.1,
     classifier_sparsity_lambda: float = 0.0,
     use_random_codes: bool = False,
+    use_pipnet_objective: bool = False,
 ) -> ProtoQuantNet:
     """Build ProtoQuantNet model from checkpoint or codebook.
 
@@ -180,10 +187,11 @@ def build_pipnet_model(
         temperature: Temperature for softmax pooling (default: 0.1)
         classifier_sparsity_lambda: L1 regularization on classifier weights (default: 0.0)
         use_random_codes: Replace loaded codes with random normal distribution (default: False)
+        use_pipnet_objective: Whether to use PiPNet-like objective during training (default: False)
 
     Returns:
         ProtoQuantNet model
-        
+
     Raises:
         ValueError: If neither checkpoint_path nor codebook_path is provided
     """
@@ -202,6 +210,7 @@ def build_pipnet_model(
             train_codebook=train_codebook,
             temperature=temperature,
             classifier_sparsity_lambda=classifier_sparsity_lambda,
+            use_pipnet_objective=use_pipnet_objective,
         )
     elif codebook_path:
         model = _build_protoquant_from_codebook(
@@ -212,18 +221,23 @@ def build_pipnet_model(
             train_codebook=train_codebook,
             temperature=temperature,
             classifier_sparsity_lambda=classifier_sparsity_lambda,
+            use_pipnet_objective=use_pipnet_objective,
         )
     else:
         raise ValueError(
             "Must provide either 'pipnet_checkpoint_path' or 'codebook_path'."
         )
-    
+
     # Replace codes with random normal distribution if requested
     if use_random_codes:
-        logger.info(f"Replacing {model.num_prototypes} codes with random normal distribution")
+        logger.info(
+            f"Replacing {model.num_prototypes} codes with random normal distribution"
+        )
         random_codes = torch.randn_like(model.codes)
         if isinstance(model.codes, nn.Parameter):
-            model.codes = nn.Parameter(random_codes, requires_grad=model.codes.requires_grad)
+            model.codes = nn.Parameter(
+                random_codes, requires_grad=model.codes.requires_grad
+            )
         else:
             model.register_buffer("codes", random_codes)
         logger.info("Codes replaced with random values")

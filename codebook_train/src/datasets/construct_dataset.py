@@ -1,5 +1,4 @@
-from src.config.datasets import BaseDatasetConfig
-from src.config.main_config import DataloaderConfig, MainConfig
+from src.config.main_config import DataloaderConfig
 from src.datasets.imagenet import get_imagenet1k
 from src.datasets.cub import get_cub200
 from torch.utils.data import DataLoader, Dataset
@@ -13,7 +12,14 @@ from src.datasets.cub import CUB200
 from src.datasets.stanford_dogs import StanfordDogs, get_stanford_dogs
 from torchvision.transforms.v2 import Compose
 
-AVAILABLE_DATASET = CUB200 | StanfordCars | Flowers102 | ImageNet | StanfordDogs | FunnyBirdsClassification
+AVAILABLE_DATASET = (
+    CUB200
+    | StanfordCars
+    | Flowers102
+    | ImageNet
+    | StanfordDogs
+    | FunnyBirdsClassification
+)
 
 DATASET_DICT = {
     "cub200": get_cub200,
@@ -24,10 +30,11 @@ DATASET_DICT = {
     "funnybirds": get_funnybirds,
 }
 
+
 def get_dataset(
     name: str,
-    path: str, 
-    train_transform: Compose, 
+    path: str,
+    train_transform: Compose,
     val_transform: Compose,
 ) -> tuple[AVAILABLE_DATASET, AVAILABLE_DATASET]:
     """Constructs the training and validation datasets based on the provided configuration.
@@ -45,9 +52,13 @@ def get_dataset(
         tuple[AVAILABLE_DATASET, AVAILABLE_DATASET]: Returns the training and validation datasets.
     """
     if name not in DATASET_DICT:
-        raise ValueError(f"Dataset {name} is not supported. Available datasets: {list(DATASET_DICT.keys())}")
+        raise ValueError(
+            f"Dataset {name} is not supported. Available datasets: {list(DATASET_DICT.keys())}"
+        )
 
-    train_dataset, val_dataset = DATASET_DICT[name](path, train_transform, val_transform)
+    train_dataset, val_dataset = DATASET_DICT[name](
+        path, train_transform, val_transform
+    )
 
     return train_dataset, val_dataset
 

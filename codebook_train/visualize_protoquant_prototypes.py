@@ -4,6 +4,7 @@ import os
 import random
 from pathlib import Path
 
+import math
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
@@ -13,6 +14,7 @@ from torch.utils.data.distributed import DistributedSampler
 from PIL import Image
 from PIL import ImageDraw
 import csv
+from functools import lru_cache
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
 from src.config.pipnet_config import BaseDatasetConfig, PipNetConfig
@@ -96,7 +98,9 @@ def _set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def _get_mean_std(use_raw: bool) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+def _get_mean_std(
+    use_raw: bool,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
     """Return normalization mean/std consistent with the selected transform pipeline.
 
     Args:
@@ -108,10 +112,16 @@ def _get_mean_std(use_raw: bool) -> tuple[tuple[float, float, float], tuple[floa
     # Keep mean/std aligned with the transform pipeline
     if use_raw:
         return (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
-    
-    return IMAGENET_DEFAULT_MEAN,IMAGENET_DEFAULT_STD
 
-def _unnormalize_image(img_tensor: torch.Tensor, mean: tuple[float, float, float], std: tuple[float, float, float], use_raw: bool) -> torch.Tensor:
+    return IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+
+
+def _unnormalize_image(
+    img_tensor: torch.Tensor,
+    mean: tuple[float, float, float],
+    std: tuple[float, float, float],
+    use_raw: bool,
+) -> torch.Tensor:
     """Convert a normalized tensor back to [0, 1] RGB for visualization.
 
     Args:
@@ -150,7 +160,9 @@ def _tensor_to_pil(img_tensor: torch.Tensor) -> Image.Image:
     return Image.fromarray(img)
 
 
-def _get_patch_params(image_size: int, fmap_size: int, patch_size: int) -> tuple[int, int]:
+def _get_patch_params(
+    image_size: int, fmap_size: int, patch_size: int
+) -> tuple[int, int]:
     """Estimate patch size and stride to map feature indices to image space.
 
     Args:
@@ -293,7 +305,9 @@ def _update_topk_vectorized(
     batch_size, num_prototypes = max_sim.shape
     batch_scores = max_sim.transpose(0, 1)  # (P, B)
     batch_flat_indices = max_idx.transpose(0, 1)  # (P, B)
-    batch_img_indices = img_indices.view(1, batch_size).expand(num_prototypes, batch_size)
+    batch_img_indices = img_indices.view(1, batch_size).expand(
+        num_prototypes, batch_size
+    )
 
     combined_scores = torch.cat([topk_scores, batch_scores], dim=1)
     combined_img_indices = torch.cat([topk_img_indices, batch_img_indices], dim=1)
@@ -359,7 +373,9 @@ def _init_distributed(rank: int, world_size: int) -> tuple[int, int, torch.devic
     backend = "nccl" if torch.cuda.is_available() else "gloo"
     init_method = os.environ.get("INIT_METHOD")
     if not init_method:
-        raise ValueError("INIT_METHOD environment variable must be set for distributed runs.")
+        raise ValueError(
+            "INIT_METHOD environment variable must be set for distributed runs."
+        )
 
     local_rank = rank
     if torch.cuda.is_available():
@@ -673,6 +689,7 @@ def _save_prototype_grid(
     proto_idx: int,
     patches: list[Image.Image],
     output_dir: Path,
+    title: str | None = None,
 ) -> None:
     """Save a single horizontal grid PNG per prototype.
 
@@ -685,9 +702,119 @@ def _save_prototype_grid(
         return
 
     grid = _make_patch_grid(patches)
+    if title:
+        grid = _add_title_to_grid(grid, title)
     grid_path = output_dir / f"prototype_{proto_idx:05d}.png"
     grid.save(grid_path)
     logger.info("Saved %s", grid_path)
+
+
+def _add_title_to_grid(
+    grid: Image.Image,
+    title: str,
+    padding: int = 6,
+    background: tuple[int, int, int] = (255, 255, 255),
+    text_color: tuple[int, int, int] = (0, 0, 0),
+) -> Image.Image:
+    """Return a new image with a title rendered above the grid."""
+    draw = ImageDraw.Draw(grid)
+    try:
+        text_bbox = draw.textbbox((0, 0), title)
+        text_w = text_bbox[2] - text_bbox[0]
+        text_h = text_bbox[3] - text_bbox[1]
+    except AttributeError:
+        text_w, text_h = draw.textsize(title)
+
+    title_h = text_h + 2 * padding
+    new_w = max(grid.width, text_w + 2 * padding)
+    new_h = grid.height + title_h
+    canvas = Image.new("RGB", (new_w, new_h), color=background)
+    canvas_draw = ImageDraw.Draw(canvas)
+    canvas_draw.text((padding, padding), title, fill=text_color)
+    x = (new_w - grid.width) // 2
+    canvas.paste(grid, (x, title_h))
+    return canvas
+
+
+def _make_image_grid(
+    images: list[Image.Image],
+    columns: int,
+    padding: int = 6,
+    background: tuple[int, int, int] = (255, 255, 255),
+) -> Image.Image:
+    """Arrange images in a grid with a fixed number of columns."""
+    if not images:
+        return Image.new("RGB", (1, 1), color=background)
+
+    columns = max(1, columns)
+    cell_w, cell_h = images[0].size
+    rows = (len(images) + columns - 1) // columns
+    canvas_w = columns * cell_w + (columns + 1) * padding
+    canvas_h = rows * cell_h + (rows + 1) * padding
+    canvas = Image.new("RGB", (canvas_w, canvas_h), color=background)
+
+    for idx, img in enumerate(images):
+        row = idx // columns
+        col = idx % columns
+        x = padding + col * (cell_w + padding)
+        y = padding + row * (cell_h + padding)
+        canvas.paste(img, (x, y))
+
+    return canvas
+
+
+@lru_cache(maxsize=4)
+def _load_cub_class_names(cub_root: str) -> list[str]:
+    classes_path = Path(cub_root) / "classes.txt"
+    if not classes_path.is_file():
+        return []
+    names: list[str] = []
+    with classes_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(" ", 1)
+            if len(parts) == 2:
+                names.append(parts[1])
+    return names
+
+
+def _get_topk_prototypes_per_class(
+    model,
+    k: int,
+) -> list[list[int]]:
+    """Return top-k prototype indices per class based on classifier weights."""
+    weights = model.classifier.weight.detach().cpu()
+    num_classes, num_prototypes = weights.shape
+    k = max(1, min(k, num_prototypes))
+    topk_per_class: list[list[int]] = []
+    for class_idx in range(num_classes):
+        class_weights = weights[class_idx]
+        _, indices = torch.topk(class_weights, k=k)
+        topk_per_class.append(indices.tolist())
+    return topk_per_class
+
+
+def _get_class_name(dataset: Dataset, class_idx: int) -> str:
+    """Return class name for CUB200 or ImageNet1K datasets."""
+    try:
+        classes = dataset.classes
+    except AttributeError:
+        classes = None
+    if isinstance(classes, (list, tuple)) and 0 <= class_idx < len(classes):
+        return str(classes[class_idx])
+
+    try:
+        root = dataset.root
+    except AttributeError:
+        root = None
+    if root:
+        names = _load_cub_class_names(str(root))
+        if 0 <= class_idx < len(names):
+            return names[class_idx]
+
+    return str(class_idx)
 
 
 def _draw_bbox(
@@ -745,7 +872,9 @@ def _build_match_grid(
         row_y = padding + row_idx * (target_h + padding)
 
         base_with_bbox = _draw_bbox(base_img, bbox, color=color, width=bbox_width)
-        base_with_bbox = base_with_bbox.resize((target_w, target_h), Image.Resampling.BICUBIC)
+        base_with_bbox = base_with_bbox.resize(
+            (target_w, target_h), Image.Resampling.BICUBIC
+        )
         canvas.paste(base_with_bbox, (padding, row_y))
 
         matches = match_rows[row_idx] if row_idx < len(match_rows) else []
@@ -753,8 +882,12 @@ def _build_match_grid(
             x = padding + (col_idx + 1) * (target_w + padding)
             if col_idx < len(matches):
                 match_img, match_bbox = matches[col_idx]
-                match_img = match_img.resize((target_w, target_h), Image.Resampling.BICUBIC)
-                match_with_bbox = _draw_bbox(match_img, match_bbox, color=color, width=bbox_width)
+                match_img = match_img.resize(
+                    (target_w, target_h), Image.Resampling.BICUBIC
+                )
+                match_with_bbox = _draw_bbox(
+                    match_img, match_bbox, color=color, width=bbox_width
+                )
                 canvas.paste(match_with_bbox, (x, row_y))
             else:
                 blank = Image.new("RGB", (target_w, target_h), color=background)
@@ -829,7 +962,9 @@ def _build_composite_image(
 
 
 @torch.no_grad()
-def visualize_protoquant(args: argparse.Namespace, rank: int = 0, world_size: int = 1) -> None:
+def visualize_protoquant(
+    args: argparse.Namespace, rank: int = 0, world_size: int = 1
+) -> None:
     """Generate top-k nearest training patches for each prototype and save grids.
 
     Args:
@@ -859,7 +994,13 @@ def visualize_protoquant(args: argparse.Namespace, rank: int = 0, world_size: in
         composites_dir = None
 
     _set_seed(args.seed)
-    logger.info("Starting scan on device=%s | distributed=%s | rank=%s/%s", device, is_distributed, rank, world_size)
+    logger.info(
+        "Starting scan on device=%s | distributed=%s | rank=%s/%s",
+        device,
+        is_distributed,
+        rank,
+        world_size,
+    )
 
     # Match evaluation transforms to training config
     is_cub = args.dataset_name.lower() == "cub200"
@@ -912,14 +1053,20 @@ def visualize_protoquant(args: argparse.Namespace, rank: int = 0, world_size: in
 
     if args.limit_prototypes > 0:
         remaining = model.limit_prototypes(k=args.limit_prototypes)
-        logger.info("Limited prototypes to top-%s per class. Remaining: %s", args.limit_prototypes, remaining)
+        logger.info(
+            "Limited prototypes to top-%s per class. Remaining: %s",
+            args.limit_prototypes,
+            remaining,
+        )
 
     proto_id_map = list(range(int(getattr(model, "num_prototypes", 0))))
     if args.prune_inactive_prototypes:
         with torch.no_grad():
             weights = torch.relu(model.classifier.weight.detach())
             active_mask = (weights > float(args.prune_min_weight)).any(dim=0)
-            active_indices = active_mask.nonzero(as_tuple=False).flatten().cpu().tolist()
+            active_indices = (
+                active_mask.nonzero(as_tuple=False).flatten().cpu().tolist()
+            )
         proto_id_map = active_indices
         remaining = model.prune_inactive_prototypes(min_weight=args.prune_min_weight)
         logger.info("Pruned inactive prototypes. Remaining: %s", remaining)
@@ -951,53 +1098,132 @@ def visualize_protoquant(args: argparse.Namespace, rank: int = 0, world_size: in
 
         # Merge per-rank top-k lists on rank 0
         assert gathered is not None
-        topk: list[list[tuple[float, int, int]]] = [
-            [] for _ in range(len(gathered[0]))
-        ]
+        topk: list[list[tuple[float, int, int]]] = [[] for _ in range(len(gathered[0]))]
         for rank_topk in gathered:
             for p_idx, entries in enumerate(rank_topk):
                 topk[p_idx].extend(entries)
 
         # Keep only global top-k per prototype
         for p_idx in range(len(topk)):
-            topk[p_idx] = sorted(topk[p_idx], key=lambda t: t[0], reverse=True)[: args.num_prototypes]
+            topk[p_idx] = sorted(topk[p_idx], key=lambda t: t[0], reverse=True)[
+                : args.num_prototypes
+            ]
     else:
         topk = local_topk
 
     max_prototypes = min(args.max_prototypes, len(topk))
-    for proto_idx in range(max_prototypes):
-        entries = topk[proto_idx]
-        logger.info("Grid %s/%s", proto_idx + 1, max_prototypes)
-        if not entries:
-            continue
-        entries = sorted(entries, key=lambda t: t[0], reverse=True)
-        if args.min_similarity > 0.0:
-            entries = [entry for entry in entries if entry[0] >= args.min_similarity]
+    if args.per_class_topk:
+        per_class_dir = output_dir / "per_class"
+        per_class_dir.mkdir(parents=True, exist_ok=True)
+        topk_per_class = _get_topk_prototypes_per_class(
+            model=model,
+            k=args.per_class_topk_k,
+        )
+        for class_idx, proto_indices in enumerate(topk_per_class):
+            class_dir = per_class_dir / f"class_{class_idx:03d}"
+            class_dir.mkdir(parents=True, exist_ok=True)
+            class_name = _get_class_name(train_ds, class_idx)
+            logger.info(
+                "Class %s (%s) | top-%s prototypes: %s",
+                class_idx,
+                class_name,
+                args.per_class_topk_k,
+                proto_indices,
+            )
+            proto_grids: list[Image.Image] = []
+            for proto_index in proto_indices:
+                if proto_index >= len(topk):
+                    continue
+                entries = topk[proto_index]
+                if not entries:
+                    continue
+                entries = sorted(entries, key=lambda t: t[0], reverse=True)
+                if args.min_similarity > 0.0:
+                    entries = [
+                        entry for entry in entries if entry[0] >= args.min_similarity
+                    ]
+                    if not entries:
+                        continue
+
+                patches: list[Image.Image] = []
+                for _, (score, img_idx, flat_idx) in enumerate(
+                    entries[: args.num_prototypes], start=1
+                ):
+                    img_tensor = _extract_image_tensor(train_ds[img_idx])
+                    patch = _extract_patch_from_image(
+                        img_tensor=img_tensor,
+                        flat_idx=flat_idx,
+                        fmap_h=fmap_h,
+                        fmap_w=fmap_w,
+                        mean=mean,
+                        std=std,
+                        patch_size=args.patch_size,
+                        use_raw_transforms=args.use_raw_transforms,
+                    )
+                    patches.append(patch)
+                if patches:
+                    proto_grids.append(_make_patch_grid(patches))
+
+                if proto_grids:
+                    if args.per_class_grid_columns and args.per_class_grid_columns > 0:
+                        columns = min(args.per_class_grid_columns, len(proto_grids))
+                    else:
+                        columns = max(1, math.isqrt(len(proto_grids)))
+                        if columns * columns < len(proto_grids):
+                            columns += 1
+                class_grid = _make_image_grid(
+                    proto_grids,
+                    columns=columns,
+                )
+                class_grid = _add_title_to_grid(
+                    class_grid,
+                    f"{class_idx}: {class_name}",
+                )
+                class_path = class_dir / f"class_{class_idx:03d}.png"
+                class_grid.save(class_path)
+                logger.info("Saved %s", class_path)
+    else:
+        for proto_idx in range(max_prototypes):
+            entries = topk[proto_idx]
+            logger.info("Grid %s/%s", proto_idx + 1, max_prototypes)
             if not entries:
                 continue
+            entries = sorted(entries, key=lambda t: t[0], reverse=True)
+            if args.min_similarity > 0.0:
+                entries = [
+                    entry for entry in entries if entry[0] >= args.min_similarity
+                ]
+                if not entries:
+                    continue
 
-        patches: list[Image.Image] = []
-        for _, (score, img_idx, flat_idx) in enumerate(entries[: args.num_prototypes], start=1):
-            img_tensor = _extract_image_tensor(train_ds[img_idx])
-            patch = _extract_patch_from_image(
-                img_tensor=img_tensor,
-                flat_idx=flat_idx,
-                fmap_h=fmap_h,
-                fmap_w=fmap_w,
-                mean=mean,
-                std=std,
-                patch_size=args.patch_size,
-                use_raw_transforms=args.use_raw_transforms,
+            patches: list[Image.Image] = []
+            for _, (score, img_idx, flat_idx) in enumerate(
+                entries[: args.num_prototypes], start=1
+            ):
+                img_tensor = _extract_image_tensor(train_ds[img_idx])
+                patch = _extract_patch_from_image(
+                    img_tensor=img_tensor,
+                    flat_idx=flat_idx,
+                    fmap_h=fmap_h,
+                    fmap_w=fmap_w,
+                    mean=mean,
+                    std=std,
+                    patch_size=args.patch_size,
+                    use_raw_transforms=args.use_raw_transforms,
+                )
+                patches.append(patch)
+
+            _save_prototype_grid(
+                proto_idx=proto_idx,
+                patches=patches,
+                output_dir=grid_dir if grid_dir is not None else output_dir,
             )
-            patches.append(patch)
 
-        _save_prototype_grid(
-            proto_idx=proto_idx,
-            patches=patches,
-            output_dir=grid_dir if grid_dir is not None else output_dir,
-        )
-
-    if (not is_distributed or rank == 0) and args.save_bboxes and args.max_bbox_images > 0:
+    if (
+        (not is_distributed or rank == 0)
+        and args.save_bboxes
+        and args.max_bbox_images > 0
+    ):
         saved_images = 0
         colors = [
             (255, 0, 0),
@@ -1055,7 +1281,9 @@ def visualize_protoquant(args: argparse.Namespace, rank: int = 0, world_size: in
 
                 img_idx = int(indices[i].item())
                 img_tensor = _extract_image_tensor(train_ds[img_idx])
-                img_vis = _unnormalize_image(img_tensor, mean, std, args.use_raw_transforms)
+                img_vis = _unnormalize_image(
+                    img_tensor, mean, std, args.use_raw_transforms
+                )
                 img_pil = _tensor_to_pil(img_vis)
 
                 topk_k = min(args.bboxes_per_image, num_prototypes)
@@ -1082,7 +1310,9 @@ def visualize_protoquant(args: argparse.Namespace, rank: int = 0, world_size: in
                 bboxes: list[tuple[int, int, int, int]] = []
                 rows: list[list[str | int | float]] = []
                 grid_images: list[Image.Image] = []
-                match_rows: list[list[tuple[Image.Image, tuple[int, int, int, int]]]] = []
+                match_rows: list[
+                    list[tuple[Image.Image, tuple[int, int, int, int]]]
+                ] = []
 
                 for rank_idx, (score, p_idx, f_idx) in enumerate(
                     zip(scores, proto_indices, flat_indices), start=1
@@ -1090,7 +1320,11 @@ def visualize_protoquant(args: argparse.Namespace, rank: int = 0, world_size: in
                     color_idx = (rank_idx - 1) % len(colors)
                     color_name = color_names[color_idx]
                     proto_index = int(p_idx.item())
-                    proto_id = int(proto_id_map[proto_index]) if proto_index < len(proto_id_map) else proto_index
+                    proto_id = (
+                        int(proto_id_map[proto_index])
+                        if proto_index < len(proto_id_map)
+                        else proto_index
+                    )
                     flat_idx = int(f_idx.item())
                     bbox = _get_bbox_coords(
                         img_w=img_pil.size[0],
@@ -1126,15 +1360,25 @@ def visualize_protoquant(args: argparse.Namespace, rank: int = 0, world_size: in
                             with Image.open(grid_path) as grid_img:
                                 grid_images.append(grid_img.convert("RGB").copy())
                         else:
-                            grid_images.append(Image.new("RGB", (1, 1), color=(0, 0, 0)))
+                            grid_images.append(
+                                Image.new("RGB", (1, 1), color=(0, 0, 0))
+                            )
 
                     if args.save_match_grid:
-                        proto_entries = topk[proto_index] if proto_index < len(topk) else []
-                        proto_entries = sorted(proto_entries, key=lambda t: t[0], reverse=True)
-                        row_matches: list[tuple[Image.Image, tuple[int, int, int, int]]] = []
+                        proto_entries = (
+                            topk[proto_index] if proto_index < len(topk) else []
+                        )
+                        proto_entries = sorted(
+                            proto_entries, key=lambda t: t[0], reverse=True
+                        )
+                        row_matches: list[
+                            tuple[Image.Image, tuple[int, int, int, int]]
+                        ] = []
                         for entry in proto_entries[: args.match_grid_columns]:
                             _, match_img_idx, match_flat_idx = entry
-                            match_tensor = _extract_image_tensor(train_ds[match_img_idx])
+                            match_tensor = _extract_image_tensor(
+                                train_ds[match_img_idx]
+                            )
                             match_vis = _unnormalize_image(
                                 match_tensor, mean, std, args.use_raw_transforms
                             )
@@ -1364,7 +1608,7 @@ def main() -> None:
     parser.add_argument(
         "--bboxes-per-image",
         type=int,
-        default=4,
+        default=3,
         help="Number of prototype bounding boxes to draw per saved image.",
     )
     parser.add_argument(
@@ -1394,6 +1638,23 @@ def main() -> None:
         type=int,
         default=2,
         help="Padding (pixels) between cells in match grids.",
+    )
+    parser.add_argument(
+        "--per-class-topk",
+        action="store_true",
+        help="Generate top-k prototypes per class instead of per-prototype grids.",
+    )
+    parser.add_argument(
+        "--per-class-topk-k",
+        type=int,
+        default=5,
+        help="Number of top prototypes per class to generate when --per-class-topk is set.",
+    )
+    parser.add_argument(
+        "--per-class-grid-columns",
+        type=int,
+        default=0,
+        help="Columns for the per-class grid (0 auto-squares).",
     )
 
     args = parser.parse_args()

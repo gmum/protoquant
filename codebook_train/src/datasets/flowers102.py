@@ -1,7 +1,7 @@
 # import dataloaders
 from torchvision.datasets import Flowers102
-from src.datasets.transforms import get_default_image_transforms
 from torchvision.transforms.v2 import Compose
+
 
 def get_flowers102(
     path: str,

@@ -1,4 +1,20 @@
 # train.py
+# Silence noisy Pydantic v2 schema warnings emitted by third-party libs
+import warnings
+
+try:
+    from pydantic.warnings import UnsupportedFieldAttributeWarning
+except Exception:  # pragma: no cover - best-effort fallback
+    UnsupportedFieldAttributeWarning = None
+
+if UnsupportedFieldAttributeWarning is not None:
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+else:
+    warnings.filterwarnings(
+        "ignore",
+        message=".*UnsupportedFieldAttributeWarning.*",
+    )
+
 import datetime
 import argparse
 from pathlib import Path
@@ -9,9 +25,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from torchvision import models
-from src.datasets.transforms import get_deit_transforms, get_default_image_transforms
+from src.datasets.transforms import get_transforms_by_mode
 from src.datasets.construct_dataset import get_dataset
 from timm.data.mixup import Mixup
 from timm.loss import SoftTargetCrossEntropy
@@ -27,18 +42,18 @@ except ImportError:
 import src.utils as utils
 
 from src.training import train_epoch, validate_epoch
+
 # Import data loading functions from the new 'datasets' package
-from src.datasets.cub import get_cub200
-from src.datasets.flowers102 import get_flowers102
-from src.datasets.stanford_cars import get_stanford_cars
-from src.datasets.stanford_dogs import get_stanford_dogs
 from src.models.deit import deit_small_patch16_224
+import timm
 import logging
+
 # New: use shared sampler helpers
 from src.distributed_utils import create_samplers
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class ViTWithGAP(nn.Module):
     """
@@ -52,6 +67,7 @@ class ViTWithGAP(nn.Module):
       - The pooled vector is passed through the original classification head.
     This is proper GAP over spatial (patch) tokens; the class token is excluded.
     """
+
     def __init__(self, vit: nn.Module):
         super().__init__()
         self.vit = vit
@@ -62,13 +78,14 @@ class ViTWithGAP(nn.Module):
         # Prepend CLS token to match positional embedding shape (1 + N_patches)
         n = x.shape[0]
         cls = self.vit.class_token.expand(n, -1, -1)  # (B, 1, C)
-        x = torch.cat((cls, x), dim=1)                # (B, 1 + N_patches, C)
+        x = torch.cat((cls, x), dim=1)  # (B, 1 + N_patches, C)
         # Encode sequence
         x = self.vit.encoder(x)
         # Proper GAP over patch tokens only (exclude CLS at index 0)
-        gap = x[:, 1:].mean(dim=1)                    # (B, C)
+        gap = x[:, 1:].mean(dim=1)  # (B, C)
         # Classify
         return self.vit.heads(gap)
+
 
 # ========================================================================om ==============
 # 1. Configuration
@@ -79,7 +96,6 @@ NUM_WORKERS = 8
 
 # --- Device Configuration ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-logger.info(f"Using device: {DEVICE}")
 
 NUM_CLASSES = {
     "stanford_cars": 196,
@@ -87,14 +103,16 @@ NUM_CLASSES = {
     "cub200": 200,
     "stanford_dogs": 120,
     "imagenet1k": 1000,
+    "funnybirds": 50,
 }
 
-WANDB_PROJECT="full-training"
-WANDB_ENTITY="bubuss"
+WANDB_PROJECT = "full-training"
+WANDB_ENTITY = "bubuss"
 
 # ======================================================================================
 # 2. Main Training Script
 # ======================================================================================
+
 
 def main(args):
     logger.info(f"Starting training script with args: {args}")
@@ -109,9 +127,11 @@ def main(args):
         device = DEVICE
         rank = 0
         world_size = 1
-    is_rank0 = (rank == 0)
+    is_rank0 = rank == 0
     if is_rank0:
-        logger.info(f"Running in {'DDP' if distributed else 'single'} mode; world_size={world_size}")
+        logger.info(
+            f"Running in {'DDP' if distributed else 'single'} mode; world_size={world_size}"
+        )
     args.checkpoint_path.mkdir(exist_ok=True)
     checkpoint_tracker = utils.CheckpointTracker()
 
@@ -129,30 +149,27 @@ def main(args):
     else:
         wandb_run = None
 
-
     logger.info(f"Loading '{args.dataset}' dataset...")
     num_classes = NUM_CLASSES[args.dataset]
     logger.info(f"Number of classes: {num_classes}")
-    
-    if args.transforms == "deit":
-        train_transform, val_transform = get_deit_transforms(is_precropped=(args.dataset == "cub200"))
-        logger.info("Using Deit image transforms.")
-    else:
-        train_transform, val_transform = get_default_image_transforms(
-            autoaugment=args.autoaugment,
-            resize_value=224 if args.dataset == "cub200" else 256,
-            crop_value=None if args.dataset == "cub200" else 224,
-            random_erase=0.1,
-            horizontal_flip=0.5,
-            is_precropped=args.dataset == "cub200",
-        )
-        logger.info("Using default image transforms.")
-            
+
+    train_transform, val_transform = get_transforms_by_mode(
+        args.transforms,
+        model_name=args.model_name,
+        resize_size=224 if args.dataset == "cub200" else 256,
+        crop_size=None if args.dataset == "cub200" else 224,
+        random_erase=0.1,
+        horizontal_flip=0.5,
+        is_precropped=(args.dataset == "cub200"),
+        autoaugment=args.autoaugment,
+    )
+    logger.info(f"Using '{args.transforms}' transforms.")
+
     train_dataset, val_dataset = get_dataset(
         name=args.dataset,
         path=args.data_path,
         train_transform=train_transform,
-        val_transform=val_transform
+        val_transform=val_transform,
     )
     # Distributed samplers (use shared helper for consistency)
     if distributed:
@@ -169,6 +186,7 @@ def main(args):
         sampler=train_sampler,
         num_workers=NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=NUM_WORKERS > 0,
     )
     val_loader = DataLoader(
         dataset=val_dataset,
@@ -177,6 +195,7 @@ def main(args):
         sampler=val_sampler,
         num_workers=NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=NUM_WORKERS > 0,
     )
     if is_rank0:
         logger.info(f"Train loader size: {len(train_loader)} batches")
@@ -203,10 +222,73 @@ def main(args):
         base = models.vit_b_16(weights=models.ViT_B_16_Weights.DEFAULT)
         hidden = base.heads.head.in_features
         base.heads.head = nn.Linear(hidden, num_classes)
+
+        if args.load_checkpoint:
+            logger.info(f"Loading checkpoint from {args.load_checkpoint}...")
+            checkpoint = torch.load(args.load_checkpoint, map_location="cpu")
+            base.load_state_dict(checkpoint["state_dict"])
+
         model = ViTWithGAP(base)
-        logger.info("Using Vision Transformer B/16 with GAP over patch tokens (excluding CLS).")
+        logger.info(
+            "Using torchvision Vision Transformer B/16 with GAP over patch tokens (excluding CLS)."
+        )
+    elif args.model_name == "vit_b_16_timm":
+        # Use timm ViT (compatible with funnybirds framework checkpoints)
+        # Pass global_pool at construction time to ensure fc_norm naming consistency
+        model = timm.create_model(
+            "vit_base_patch16_224",
+            pretrained=not args.load_checkpoint,
+            num_classes=num_classes,
+            global_pool="avg",
+        )
+
+        if args.load_checkpoint:
+            logger.info(f"Loading checkpoint from {args.load_checkpoint}...")
+            checkpoint = torch.load(args.load_checkpoint, map_location="cpu")
+            state_dict = checkpoint.get("state_dict", checkpoint)
+            # Handle head dimension mismatch if checkpoint was trained on different num_classes
+            if (
+                "head.weight" in state_dict
+                and state_dict["head.weight"].shape[0] != num_classes
+            ):
+                logger.warning(
+                    f"Checkpoint head has {state_dict['head.weight'].shape[0]} classes, "
+                    f"but num_classes={num_classes}. Reinitializing head."
+                )
+                del state_dict["head.weight"]
+                del state_dict["head.bias"]
+            # Remap norm -> fc_norm if checkpoint was saved with old naming
+            if "norm.weight" in state_dict and "fc_norm.weight" not in state_dict:
+                logger.info("Remapping checkpoint keys: norm -> fc_norm")
+                state_dict["fc_norm.weight"] = state_dict.pop("norm.weight")
+                state_dict["fc_norm.bias"] = state_dict.pop("norm.bias")
+            model.load_state_dict(state_dict, strict=False)
+
+        logger.info(
+            "Using timm Vision Transformer B/16 with global_pool='avg' (GAP over patch tokens)."
+        )
     else:
         raise ValueError(f"Unsupported model: {args.model_name}")
+
+    # Optionally freeze backbone (train only classification head)
+    if args.freeze_backbone:
+        for param in model.parameters():
+            param.requires_grad = False
+        # Unfreeze the classification head
+        if hasattr(model, "head"):
+            for param in model.head.parameters():
+                param.requires_grad = True
+        elif hasattr(model, "fc"):
+            for param in model.fc.parameters():
+                param.requires_grad = True
+        elif hasattr(model, "classifier"):
+            for param in model.classifier.parameters():
+                param.requires_grad = True
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        logger.info(
+            f"Backbone frozen. Training {trainable:,} / {total:,} parameters ({100 * trainable / total:.1f}%)"
+        )
 
     # Ensure the trainable model is on DEVICE
     model = model.to(device)
@@ -220,31 +302,44 @@ def main(args):
         )
     if is_rank0:
         logger.info(f"Model: {model.__class__.__name__}")
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+
+    # Select optimizer
+    if args.optimizer == "sgd":
+        optimizer = optim.SGD(
+            model.parameters(),
+            lr=args.learning_rate,
+            momentum=args.momentum,
+            weight_decay=args.weight_decay,
+        )
+    else:  # adamw
+        optimizer = optim.AdamW(
+            model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
+        )
     logger.info(f"Optimizer: {optimizer}")
     scheduler_args = utils.SchedulerArgs(
-        epochs=args.num_epochs,
-        warmup_epochs=args.warmup_epochs,
-        lr=args.learning_rate
+        epochs=args.num_epochs, warmup_epochs=args.warmup_epochs, lr=args.learning_rate
     )
     scheduler = utils.create_schedulers(
-        optimizers=[optimizer],
-        scheduler_args=scheduler_args
+        optimizers=[optimizer], scheduler_args=scheduler_args
     )[0]
 
     # --- Define Loss, Optimizer, and Transforms for training loop ---
     # Use softer augmentation for CUB and match loss to mixup soft targets
-    mixup_fn = Mixup(
-        mixup_alpha=args.mixup_alpha,
-        cutmix_alpha=args.cutmix_alpha,
-        cutmix_minmax=None,
-        prob=args.mixup_prob,
-        switch_prob=args.switch_prob,
-        mode='batch',
-        label_smoothing=args.label_smoothing,
-        num_classes=num_classes
-    )
-    criterion = SoftTargetCrossEntropy()
+    if args.use_mixup:
+        mixup_fn = Mixup(
+            mixup_alpha=args.mixup_alpha,
+            cutmix_alpha=args.cutmix_alpha,
+            cutmix_minmax=None,
+            prob=args.mixup_prob,
+            switch_prob=args.switch_prob,
+            mode="batch",
+            label_smoothing=args.label_smoothing,
+            num_classes=num_classes,
+        )
+        criterion: nn.Module = SoftTargetCrossEntropy()
+    else:
+        mixup_fn = None
+        criterion = nn.CrossEntropyLoss()
 
     logger.info("\nStarting training..." if is_rank0 else "")
     ckpt_path = None
@@ -270,9 +365,7 @@ def main(args):
             top1_acc, top5_acc = _distributed_validate(model, val_loader, device)
         else:
             top1_acc, top5_acc = validate_epoch(
-                model=model,
-                val_dataloader=val_loader,
-                device=device
+                model=model, val_dataloader=val_loader, device=device
             )
 
         if is_rank0:
@@ -280,12 +373,16 @@ def main(args):
                 f"Validation | Top-1 Accuracy: {top1_acc:.2f}% | Top-5 Accuracy: {top5_acc:.2f}%"
             )
             if checkpoint_tracker.is_best(top1_acc):
-                logger.info(f"Saving the best checkpoint at epoch: {epoch + 1} with accuracy: {top1_acc:.2f}%")
+                logger.info(
+                    f"Saving the best checkpoint at epoch: {epoch + 1} with accuracy: {top1_acc:.2f}%"
+                )
                 ckpt_path = (
                     args.checkpoint_path
                     / f"{args.dataset}_{args.model_name}_full_{timestamp}.pth"
                 )
-                state_dict = model.module.state_dict() if distributed else model.state_dict()
+                state_dict = (
+                    model.module.state_dict() if distributed else model.state_dict()
+                )
                 torch.save(state_dict, ckpt_path)
 
         # Step scheduler on all ranks
@@ -301,7 +398,6 @@ def main(args):
                 }
             )
     if is_rank0 and wandb_run and ckpt_path:
-        wandb_run.save(ckpt_path, policy="now")
         logger.info("Training finished.")
         logger.info(
             f"Best validation Top-1 accuracy: {checkpoint_tracker.best_val_accuracy:.2f}%"
@@ -312,7 +408,9 @@ def main(args):
         torch.distributed.barrier()
         torch.distributed.destroy_process_group()
 
+
 # --- New helpers for DDP setup and distributed validation ---
+
 
 def _init_distributed(args) -> torch.device:
     """Initialize torch.distributed from argparse args and select device."""
@@ -344,7 +442,9 @@ def _init_distributed(args) -> torch.device:
 
 
 @torch.no_grad()
-def _distributed_validate(model: nn.Module, val_loader: DataLoader, device: torch.device):
+def _distributed_validate(
+    model: nn.Module, val_loader: DataLoader, device: torch.device
+):
     """Validate across distributed shards and return globally reduced Top-1/Top-5."""
     was_training = model.training
     model.eval()
@@ -382,6 +482,7 @@ def _distributed_validate(model: nn.Module, val_loader: DataLoader, device: torc
         model.train()
     return top1, top5
 
+
 def _spawn_worker(local_rank: int, args):
     """Spawned process entrypoint."""
     args.local_rank = local_rank
@@ -392,6 +493,7 @@ def _spawn_worker(local_rank: int, args):
     os.environ["MASTER_ADDR"] = str(args.master_addr)
     os.environ["MASTER_PORT"] = str(args.master_port)
     main(args)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -405,7 +507,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=["stanford_cars", "flowers102", "cub200", "stanford_dogs", "imagenet1k"],
+        choices=[
+            "stanford_cars",
+            "flowers102",
+            "cub200",
+            "stanford_dogs",
+            "imagenet1k",
+            "funnybirds",
+        ],
         help="The dataset to train on.",
     )
     parser.add_argument(
@@ -441,6 +550,19 @@ if __name__ == "__main__":
         help="Weight decay for the optimizer.",
     )
     parser.add_argument(
+        "--optimizer",
+        type=str,
+        choices=["adamw", "sgd"],
+        default="adamw",
+        help="Optimizer to use (adamw or sgd).",
+    )
+    parser.add_argument(
+        "--momentum",
+        type=float,
+        default=0.9,
+        help="Momentum for SGD optimizer.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -471,15 +593,40 @@ if __name__ == "__main__":
     parser.add_argument(
         "--transforms",
         type=str,
-        choices=["deit", "default"],
+        choices=["deit", "default", "raw", "resize_norm"],
         default="default",
         help="Which transforms pipeline to use.",
     )
+    parser.add_argument(
+        "--use_mixup",
+        action="store_true",
+        help="Enable Mixup/CutMix augmentation.",
+    )
+    parser.add_argument(
+        "--freeze_backbone",
+        action="store_true",
+        help="Freeze backbone and only train classification head.",
+    )
     parser.add_argument("--mixup_alpha", type=float, default=0.8, help="Mixup alpha.")
     parser.add_argument("--cutmix_alpha", type=float, default=1.0, help="CutMix alpha.")
-    parser.add_argument("--mixup_prob", type=float, default=1.0, help="Probability of applying mixup/cutmix.")
-    parser.add_argument("--switch_prob", type=float, default=0.5, help="Switch probability between mixup and cutmix.")
-    parser.add_argument("--label_smoothing", type=float, default=0.1, help="Label smoothing for soft targets.")
+    parser.add_argument(
+        "--mixup_prob",
+        type=float,
+        default=1.0,
+        help="Probability of applying mixup/cutmix.",
+    )
+    parser.add_argument(
+        "--switch_prob",
+        type=float,
+        default=0.5,
+        help="Switch probability between mixup and cutmix.",
+    )
+    parser.add_argument(
+        "--label_smoothing",
+        type=float,
+        default=0.1,
+        help="Label smoothing for soft targets.",
+    )
     parser.add_argument(
         "--distributed",
         action="store_true",
@@ -514,6 +661,12 @@ if __name__ == "__main__":
         type=str,
         default="29500",
         help="Master node port for TCP initialization.",
+    )
+    parser.add_argument(
+        "--load_checkpoint",
+        type=Path,
+        default=None,
+        help="Path to a checkpoint file to load before training.",
     )
 
     args = parser.parse_args()

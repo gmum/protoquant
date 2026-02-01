@@ -8,9 +8,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from src.construct_model import get_backbone, construct_model
 import torch
-import torch.nn as nn
-from tqdm import tqdm
-from torchmetrics import Accuracy
 
 # --- Add project's source to the Python path for imports ---
 # This ensures that modules from the 'src' directory can be found.
@@ -23,7 +20,7 @@ if str(project_root) not in sys.path:
 # Import necessary classes and functions from the project structure.
 from src.config.pipnet_config import BaseDatasetConfig, PipNetConfig
 from src.datasets.construct_dataset import get_dataset
-from src.datasets.transforms import get_default_image_transforms, get_deit_transforms
+from src.datasets.transforms import get_transforms_by_mode
 from src.models.proto_quantnet import ProtoQuantNet
 from src.pipnet_utils import TrainingWrapper, build_pipnet_model
 from src.training import validate_epoch
@@ -68,7 +65,9 @@ def print_local_size_report(
         print(f"  Std Dev of all positive weights: {positive_weights.std().item():.4f}")
         print(f"  Min of all positive weights:    {positive_weights.min().item():.4f}")
         print(f"  Max of all positive weights:    {positive_weights.max().item():.4f}")
-        print(f"  Median of all positive weights: {torch.median(positive_weights).item():.4f}")
+        print(
+            f"  Median of all positive weights: {torch.median(positive_weights).item():.4f}"
+        )
         print("-" * 60)
 
     for i, size in enumerate(local_sizes):
@@ -87,8 +86,11 @@ def print_local_size_report(
     print("Summary Statistics:")
     print(f"  Average local size per class: {avg_size:.2f}")
     print(f"  Min | Max local size:         {min_size} | {max_size}")
-    print(f"  Total unique prototypes used: {unique_protos_used} / {model.num_prototypes} ({ (unique_protos_used / model.num_prototypes) * 100:.2f}%)")
+    print(
+        f"  Total unique prototypes used: {unique_protos_used} / {model.num_prototypes} ({(unique_protos_used / model.num_prototypes) * 100:.2f}%)"
+    )
     print("=" * 60 + "\n")
+
 
 @torch.no_grad()
 def evaluate_with_top_k_prototypes(
@@ -128,14 +130,18 @@ def evaluate_with_top_k_prototypes(
     full_model_protos_used = (positive_weights > 0).any(dim=0).sum().item()
     # Avg local size per class at current threshold
     full_local_sizes = model.calculate_local_size(threshold=threshold).float()
-    avg_local_sizes['Full'] = full_local_sizes.mean().item()
+    avg_local_sizes["Full"] = full_local_sizes.mean().item()
 
-    results['Full'] = full_model_accuracy
-    unique_protos_counts['Full'] = full_model_protos_used
-    
+    results["Full"] = full_model_accuracy
+    unique_protos_counts["Full"] = full_model_protos_used
+
     logger.info(f"Full Model Validation Accuracy: {full_model_accuracy:.2f}%")
-    logger.info(f"Unique Prototypes Used in Full Model: {full_model_protos_used} / {model.num_prototypes}")
-    logger.info(f"Avg local size/class (Full) @ thr={threshold}: {avg_local_sizes['Full']:.2f}")
+    logger.info(
+        f"Unique Prototypes Used in Full Model: {full_model_protos_used} / {model.num_prototypes}"
+    )
+    logger.info(
+        f"Avg local size/class (Full) @ thr={threshold}: {avg_local_sizes['Full']:.2f}"
+    )
 
     for k in top_k_list:
         if k > model.num_prototypes:
@@ -145,14 +151,14 @@ def evaluate_with_top_k_prototypes(
             continue
 
         logger.info(f"--- Evaluating with k = {k} ---")
-        
+
         # Restore original weights before limiting
         model.classifier.weight.data = original_weights.clone()
-        
+
         # Use the built-in limit_prototypes method
         unique_protos_used = model.limit_prototypes(k)
         unique_protos_counts[k] = unique_protos_used
-        
+
         # Avg local size per class at threshold after masking
         k_local_sizes = model.calculate_local_size(threshold=threshold).float()
         avg_local_sizes[k] = k_local_sizes.mean().item()
@@ -185,8 +191,8 @@ def plot_results(
     Includes the full model's performance as a baseline.
     """
     # Separate the 'Full' model results from the top-k results
-    full_model_acc = results.pop('Full', None)
-    unique_protos.pop('Full', None)
+    full_model_acc = results.pop("Full", None)
+    unique_protos.pop("Full", None)
 
     k_values = sorted(results.keys())
     accuracies = [results[k] for k in k_values]
@@ -197,7 +203,15 @@ def plot_results(
     color = "tab:blue"
     ax1.set_xlabel("Number of Top Prototypes per Class (k)")
     ax1.set_ylabel("Validation Accuracy (%)", color=color)
-    ax1.plot(k_values, accuracies, "o-", color=color, linewidth=2, markersize=8, label="Top-k Accuracy")
+    ax1.plot(
+        k_values,
+        accuracies,
+        "o-",
+        color=color,
+        linewidth=2,
+        markersize=8,
+        label="Top-k Accuracy",
+    )
     ax1.tick_params(axis="y", labelcolor=color)
     ax1.grid(True, which="both", ls="--", alpha=0.6)
 
@@ -205,12 +219,12 @@ def plot_results(
     if full_model_acc is not None:
         ax1.axhline(
             y=full_model_acc,
-            color='green',
-            linestyle=':',
+            color="green",
+            linestyle=":",
             linewidth=2,
-            label=f'Full Model Accuracy ({full_model_acc:.2f}%)'
+            label=f"Full Model Accuracy ({full_model_acc:.2f}%)",
         )
-    ax1.legend(loc='lower right')
+    ax1.legend(loc="lower right")
     # --- End of new section ---
 
     ax2 = ax1.twinx()
@@ -227,7 +241,6 @@ def plot_results(
     plt.savefig(plot_path)
     logger.info(f"Saved performance plot to: {plot_path}")
     plt.close()
-
 
 
 def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
@@ -250,12 +263,12 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
 
         # Build ProtoQuantNet model
         model = build_pipnet_model(
-            backbone=backbone, 
-            num_classes=cfg.dataset.num_classes, 
-            device=device, 
+            backbone=backbone,
+            num_classes=cfg.dataset.num_classes,
+            device=device,
             pipnet_checkpoint_path=cfg.pipnet_checkpoint_path,
             codebook_path=cfg.codebook_path,
-            train_codebook=cfg.training.train_codebook
+            train_codebook=cfg.training.train_codebook,
         )
         model.eval()
         logger.info("Model loaded successfully.")
@@ -295,7 +308,7 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
     for i, size in enumerate(local_sizes):
         print(f"  Class {i:3d}: {size.item():4d} significant prototypes")
     print("-" * 60)
-    
+
     print_local_size_report(
         pipnet_checkpoint_path=args.pipnet_checkpoint_path,
         model_name=args.model_name,
@@ -315,7 +328,7 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
             top_k_list = sorted([int(k.strip()) for k in args.eval_top_k.split(",")])
         except ValueError:
             logger.error(
-                f"Invalid format for --eval-top-k. Please use comma-separated integers (e.g., '5,10,15')."
+                "Invalid format for --eval-top-k. Please use comma-separated integers (e.g., '5,10,15')."
             )
             return
 
@@ -329,19 +342,25 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
         logger.info(
             f"Loading validation data for '{args.dataset_name}' from '{args.dataset_path}'"
         )
-        # Match main_train_pipnet transform logic exactly using inline conditionals
-        is_cub = (args.dataset_name.lower() == "cub200")
-        if args.use_deit_transforms:
-            _, val_transform = get_deit_transforms(is_precropped=is_cub)
-        else:
-            _, val_transform = get_default_image_transforms(
-                autoaugment=False,
-                resize_value=224 if is_cub else 256,
-                crop_value=None if is_cub else 224,
-                random_erase=None,
-                horizontal_flip=None,
-                is_precropped=is_cub,
-            )
+        # Match training transform logic using the unified selector
+        is_cub = args.dataset_name.lower() == "cub200"
+        transform_mode = (
+            "deit"
+            if args.use_deit_transforms
+            else "raw"
+            if args.use_raw_transforms
+            else "default"
+        )
+        _, val_transform = get_transforms_by_mode(
+            transform_mode,
+            model_name=cfg.model.name,
+            resize_size=224 if is_cub else 256,
+            crop_size=None if is_cub else 224,
+            random_erase=None,
+            horizontal_flip=None,
+            is_precropped=is_cub,
+            autoaugment=False,
+        )
         _, val_ds = get_dataset(
             name=args.dataset_name,
             train_transform=val_transform,  # pass a valid transform (train set unused here)
@@ -367,16 +386,19 @@ def analyze_prototypes(cfg: PipNetConfig, args: argparse.Namespace) -> None:
 
         # 4. Print results in a formatted table and generate the plot
         print("\n" + "-" * 70)
-        print(f"{'K (Top Protos/Class)':<25} | {'Validation Accuracy (%)':<25} | {'Unique Protos Used':<20} | {'Avg Local Size/Class':<20}")
+        print(
+            f"{'K (Top Protos/Class)':<25} | {'Validation Accuracy (%)':<25} | {'Unique Protos Used':<20} | {'Avg Local Size/Class':<20}"
+        )
         print("-" * 70)
-        key_order = ['Full'] + sorted([k for k in results.keys() if k != 'Full'])
+        key_order = ["Full"] + sorted([k for k in results.keys() if k != "Full"])
         for k in key_order:
             k_str = str(k)
-            print(f"{k_str:<25} | {results[k]:<25.2f} | {unique_protos[k]:<20} | {avg_local_sizes[k]:<20.2f}")
+            print(
+                f"{k_str:<25} | {results[k]:<25.2f} | {unique_protos[k]:<20} | {avg_local_sizes[k]:<20.2f}"
+            )
         print("=" * 70 + "\n")
 
         plot_results(results, unique_protos, model.num_prototypes, output_dir)
-
 
 
 def main():
@@ -459,6 +481,11 @@ def main():
         "--use-deit-transforms",
         action="store_true",
         help="Use DeiT evaluation transforms (resize 256 -> center-crop 224, bicubic, etc.). Must match training if that was used.",
+    )
+    eval_group.add_argument(
+        "--use-raw-transforms",
+        action="store_true",
+        help="Use raw tensor transforms (no normalization, no resizing).",
     )
 
     args = parser.parse_args()

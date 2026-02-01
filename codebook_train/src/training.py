@@ -39,7 +39,10 @@ def _apply_batch_transforms(
             p
             for p in sig.parameters.values()
             if p.kind
-            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
         ]
         wants_labels = len(positional) >= 2
     except (TypeError, ValueError):
@@ -154,9 +157,9 @@ def train_epoch_cosine_codebook(
     if isinstance(model, nn.parallel.DistributedDataParallel):
         codebook: CosineSimilarityCodebook = model.module.codebook
     elif isinstance(model, CNNCodebookWrapper):
-        codebook: CosineSimilarityCodebook = model.codebook # type: ignore
+        codebook: CosineSimilarityCodebook = model.codebook  # type: ignore
     else:
-        codebook: CosineSimilarityCodebook = model # type: ignore
+        codebook: CosineSimilarityCodebook = model  # type: ignore
 
     codebook_statistics = codebook.get_statistics()
     codebook.reset_statistics()
@@ -176,8 +179,12 @@ def validate_epoch_cosine_codebook(
 
     # Initialize torchmetrics for validation with distributed sync
     k5 = min(5, num_classes)
-    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1, sync_on_compute=True).to(device)
-    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=k5, sync_on_compute=True).to(device)
+    top1_accuracy = Accuracy(
+        task="multiclass", num_classes=num_classes, top_k=1, sync_on_compute=True
+    ).to(device)
+    top5_accuracy = Accuracy(
+        task="multiclass", num_classes=num_classes, top_k=k5, sync_on_compute=True
+    ).to(device)
 
     with torch.no_grad():
         for inputs, labels in val_dataloader:
@@ -297,15 +304,29 @@ def validate_epoch(
 
             if num_classes is None:
                 num_classes = int(logits.shape[1])
-                top1_metric = Accuracy(task="multiclass", num_classes=num_classes, top_k=1, sync_on_compute=True).to(device)
+                top1_metric = Accuracy(
+                    task="multiclass",
+                    num_classes=num_classes,
+                    top_k=1,
+                    sync_on_compute=True,
+                ).to(device)
                 k5 = min(5, num_classes)
-                top5_metric = Accuracy(task="multiclass", num_classes=num_classes, top_k=k5, sync_on_compute=True).to(device)
+                top5_metric = Accuracy(
+                    task="multiclass",
+                    num_classes=num_classes,
+                    top_k=k5,
+                    sync_on_compute=True,
+                ).to(device)
 
             top1_metric.update(logits, labels)  # type: ignore[union-attr]
             top5_metric.update(logits, labels)  # type: ignore[union-attr]
 
-    top1_acc = float((top1_metric.compute() * 100).item()) if top1_metric is not None else 0.0  # type: ignore[union-attr]
-    top5_acc = float((top5_metric.compute() * 100).item()) if top5_metric is not None else 0.0  # type: ignore[union-attr]
+    top1_acc = (
+        float((top1_metric.compute() * 100).item()) if top1_metric is not None else 0.0
+    )  # type: ignore[union-attr]
+    top5_acc = (
+        float((top5_metric.compute() * 100).item()) if top5_metric is not None else 0.0
+    )  # type: ignore[union-attr]
     return top1_acc, top5_acc
 
 
@@ -430,8 +451,12 @@ def validate_epoch_ema_codebook(
 
     # Initialize torchmetrics for validation with distributed sync
     k5 = min(5, num_classes)
-    top1_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=1, sync_on_compute=True).to(device)
-    top5_accuracy = Accuracy(task="multiclass", num_classes=num_classes, top_k=k5, sync_on_compute=True).to(device)
+    top1_accuracy = Accuracy(
+        task="multiclass", num_classes=num_classes, top_k=1, sync_on_compute=True
+    ).to(device)
+    top5_accuracy = Accuracy(
+        task="multiclass", num_classes=num_classes, top_k=k5, sync_on_compute=True
+    ).to(device)
 
     with torch.no_grad():
         for inputs, labels in val_dataloader:
@@ -494,12 +519,12 @@ def train_epoch_pipnet(
         logits = model(transformed_images)
         ce_loss = criterion(logits, transformed_labels)
         if isinstance(model, nn.parallel.DistributedDataParallel):
-            reg_loss = model.module.last_out.classifier_sparsity_loss # type: ignore
+            reg_loss = model.module.last_out.classifier_sparsity_loss  # type: ignore
         else:
-            reg_loss = model.last_out.classifier_sparsity_loss # type: ignore
-        
+            reg_loss = model.last_out.classifier_sparsity_loss  # type: ignore
+
         total_loss = ce_loss + (reg_loss if reg_loss is not None else 0.0)
-        
+
         total_loss.backward()
         optimizer.step()
 
@@ -507,12 +532,16 @@ def train_epoch_pipnet(
             train_acc = (logits.argmax(1) == labels).float().mean()
 
         if wandb_run:
-            wandb_run.log({
-                "Train Total Loss": float(total_loss.item()),
-                "Train CE Loss": float(ce_loss.item()),
-                "Train Reg Loss": float(reg_loss.item()) if reg_loss is not None else 0.0,
-                "Train Accuracy": float(train_acc.item()),
-            })
+            wandb_run.log(
+                {
+                    "Train Total Loss": float(total_loss.item()),
+                    "Train CE Loss": float(ce_loss.item()),
+                    "Train Reg Loss": float(reg_loss.item())
+                    if reg_loss is not None
+                    else 0.0,
+                    "Train Accuracy": float(train_acc.item()),
+                }
+            )
 
         if i % log_every == 0:
             logger.info(

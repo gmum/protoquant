@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
@@ -26,8 +25,11 @@ class BaseDatasetConfig:
     horizontal_flip: float | None = 0.5
     is_precropped: bool = False
     autoaugment: bool = False
-    
+
     use_deit_transforms: bool = False
+
+    # Resize to 224 and normalize (no augmentations)
+    use_resize_norm_transforms: bool = False
 
     # Some benchmarks (e.g. FunnyBirds) use raw tensors without ImageNet normalization
     # and without additional augmentation. When enabled, training code should use

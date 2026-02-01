@@ -87,6 +87,10 @@ def get_funnybirds(
     The official framework uses `train` and `test` splits.
     """
 
-    train_ds = FunnyBirdsClassification(root_dir=path, split="train", transform=train_transform)
-    val_ds = FunnyBirdsClassification(root_dir=path, split="test", transform=val_transform)
+    train_ds = FunnyBirdsClassification(
+        root_dir=path, split="train", transform=train_transform
+    )
+    val_ds = FunnyBirdsClassification(
+        root_dir=path, split="test", transform=val_transform
+    )
     return train_ds, val_ds

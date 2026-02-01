@@ -24,7 +24,7 @@ class WandbConfig:
 class ModelConfig:
     name: str = MISSING
     checkpoint_path: Optional[str] = None
-    global_pool: Optional[str] = "avg" # for vit
+    global_pool: Optional[str] = "avg"  # for vit
 
 
 @dataclass
@@ -36,7 +36,9 @@ class TrainingConfig:
     warmup_epochs: int = MISSING
     train_codebook: bool = True
     classifier_sparsity_lambda: float = 0.0
-    use_random_codes: bool = False  # Replace loaded codes with random normal distribution
+    use_random_codes: bool = False
+    limit_and_prune_prototypes: bool = False  # Keep top-10 prototypes per class
+    use_pipnet_objective: bool = False  # Use PiPNet-like objective during training
 
 
 @dataclass
@@ -53,7 +55,9 @@ class PipNetConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     base_optimizer: BaseOptimizerConfig = MISSING
     codebook_path: Optional[str] = None  # Path to codebook tensor state_dict
-    pipnet_checkpoint_path: Optional[str] = None  # Path to a full PIPNet model checkpoint
+    pipnet_checkpoint_path: Optional[str] = (
+        None  # Path to a full PIPNet model checkpoint
+    )
 
     epochs: int = MISSING
     dataset: BaseDatasetConfig = MISSING

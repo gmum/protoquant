@@ -26,7 +26,7 @@ class WandbConfig:
 class ModelConfig:
     name: str = MISSING
     checkpoint_path: str = MISSING
-    global_pool: str = "avg" # avg for vit
+    global_pool: str = "avg"  # avg for vit
 
 
 @dataclass
@@ -48,6 +48,13 @@ class TrainingConfig:
     only_features: bool = (
         False  # whether cache model features and use them to train the codebook
     )
+
+
+@dataclass
+class TimingConfig:
+    mode: str = "both"  # options: "full", "codebook", "both"
+    epochs: int = 0  # 0 uses cfg.epochs
+    warmup_epochs: int = 2  # epochs to exclude from averaging
 
 
 @dataclass
@@ -80,6 +87,7 @@ class MainConfig:
     codebook_path: Optional[str] = None
     codebook_init: BaseInitializationConfig = MISSING
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    timing: TimingConfig = field(default_factory=TimingConfig)
     _logging_level: int = INFO
 
     wandb: WandbConfig = field(default_factory=WandbConfig)

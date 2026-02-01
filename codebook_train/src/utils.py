@@ -20,6 +20,7 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 UNIQUE_ID = uuid.uuid4().hex[:8]
 
+
 def set_reproducibility(seed: int) -> None:
     """Set the seed for reproducibility and deterministic behavior
 
@@ -73,19 +74,19 @@ def create_optimizers(
 @dataclass
 class SchedulerArgs:
     """Configuration for creating a timm scheduler."""
-    sched: str = 'cosine'
-    epochs: int = 100            # Fewer epochs are needed for fine-tuning
-    lr: float = 5e-5             # Lower learning rate is crucial
-    warmup_epochs: int = 5       # Standard value
-    cooldown_epochs: int = 5     # Standard value
-    min_lr: float = 1e-6         # The floor for the learning rate
-    warmup_lr: float = 1e-6      # The learning rate to start the warmup from
-    t_in_epochs: bool = True     # Step per-epoch via scheduler.step(epoch)
+
+    sched: str = "cosine"
+    epochs: int = 100  # Fewer epochs are needed for fine-tuning
+    lr: float = 5e-5  # Lower learning rate is crucial
+    warmup_epochs: int = 5  # Standard value
+    cooldown_epochs: int = 5  # Standard value
+    min_lr: float = 1e-6  # The floor for the learning rate
+    warmup_lr: float = 1e-6  # The learning rate to start the warmup from
+    t_in_epochs: bool = True  # Step per-epoch via scheduler.step(epoch)
 
 
 def create_schedulers(
-    optimizers: list[torch.optim.Optimizer],
-    scheduler_args: SchedulerArgs
+    optimizers: list[torch.optim.Optimizer], scheduler_args: SchedulerArgs
 ) -> list[torch.optim.lr_scheduler._LRScheduler]:
     """
     Creates a DeiT-like learning rate scheduler using a configuration object.
@@ -254,6 +255,7 @@ def save_checkpoint(
     val_accuracy: float,
     epoch: int,
     name: str,
+    seed: int,
     hydra_path: Path,
     wandb_run=None,
     save_wandb: bool = False,
@@ -281,10 +283,10 @@ def save_checkpoint(
         raise ValueError("Model does not have a codebook attribute")
 
     # Save model
-    model_path = hydra_path / f"model_{name}_{UNIQUE_ID}.pth"
+    model_path = hydra_path / f"model_{name}_seed_{seed}_{UNIQUE_ID}.pth"
 
     # Save codebook
-    codebook_path = hydra_path / f"codebook_{name}_{UNIQUE_ID}.pth"
+    codebook_path = hydra_path / f"codebook_{name}_seed_{seed}_{UNIQUE_ID}.pth"
     logger.info(f"Saving codebook to {codebook_path}")
     torch.save(codebook.state_dict(), codebook_path)
 

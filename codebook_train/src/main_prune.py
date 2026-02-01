@@ -1,5 +1,5 @@
 from pathlib import Path
-from src.datasets.transforms import get_default_image_transforms, get_deit_transforms
+from src.datasets.transforms import get_transforms_from_config
 from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
@@ -18,11 +18,18 @@ from src.config.pruning_config import PruningConfig
 import wandb
 import warnings
 
-warnings.filterwarnings(
-    "ignore",
-    message=".*UnsupportedFieldAttributeWarning.*",
-    module="pydantic._internal._generate_schema",
-)
+try:
+    from pydantic.warnings import UnsupportedFieldAttributeWarning
+except Exception:  # pragma: no cover - best-effort fallback
+    UnsupportedFieldAttributeWarning = None
+
+if UnsupportedFieldAttributeWarning is not None:
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+else:
+    warnings.filterwarnings(
+        "ignore",
+        message=".*UnsupportedFieldAttributeWarning.*",
+    )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -78,19 +85,10 @@ def prepare_codebook_pruning(
 
     model = construct_model(cfg, device)
 
-    if cfg.dataset.use_deit_transforms:
-        train_transform, val_transform = get_deit_transforms(is_precropped=cfg.dataset.name == "cub200")
-        logger.info(f"Using DeiT transforms. Precropped: {cfg.dataset.name == 'cub200'}")
-    else:
-        train_transform, val_transform = get_default_image_transforms(
-            autoaugment=cfg.dataset.autoaugment,
-            resize_value=224 if cfg.dataset.name == "cub200" else 256,
-            crop_value=None if cfg.dataset.name == "cub200" else 224,
-            random_erase=cfg.dataset.random_erase,
-            horizontal_flip=cfg.dataset.horizontal_flip,
-            is_precropped=cfg.dataset.name == "cub200",
-        )
-        logger.info(f"Using default transforms. Precropped: {cfg.dataset.name == 'cub200'}")
+    train_transform, val_transform = get_transforms_from_config(
+        cfg.dataset,
+        model_name=cfg.model.name,
+    )
 
     train_ds, val_ds = get_dataset(
         name=cfg.dataset.name,
